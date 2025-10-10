@@ -1,0 +1,135 @@
+You are building a full stack web app in Replit that does four things with minimal user input.
+Imports and dedupes Vine XLSX files into a product catalog with basis from ETV. Autopopulates every required eBay field for a selected item and forces unique titles and descriptions. Fully automates listing to label to tracking after the user clicks Approve. Produces a CPA ready ledger and exports with realized gain or loss per item.
+
+Tech stack and baseline
+- Backend. Node 20 with TypeScript, Express, Prisma, Postgres (Replit DB or Postgres add on), Zod validation.
+- Frontend. React with Vite, Tailwind, shadcn/ui for basic components, Axios for API calls. Keep UI accessible.
+- Auth. Simple email plus magic link or local password for now. Single user to start.
+- Tests. Vitest for unit tests, Playwright for happy path e2e, axe checks for basic accessibility.
+- Background work. BullMQ or simple cron for polling and scheduled jobs.
+- External APIs. eBay Sell APIs (Taxonomy, Inventory, Offer, Fulfillment, Post Order, Messaging), eBay Picture Services, Shippo or EasyPost for labels.
+- Small model. Use an inexpensive LLM only for text rewrite and message triage. All policy checks and math are deterministic.
+
+Environment variables
+- EBAY_APP_ID, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_REDIRECT_URL, EBAY_ENV (sandbox or production).
+- EBAY_SCOPE_SELL_API, EBAY_SCOPE_MESSAGING.
+- SHIPPO_API_KEY or EASYPOST_API_KEY.
+- DATABASE_URL for Prisma.
+- SESSION_SECRET.
+- PRIVACY_FORBIDDEN_WORDS default list includes: Vine, received for review, promo unit, ASIN in public text.
+- ADDRESS_PROFILE_DEFAULT, ADDRESS_PROFILE_STREET.
+- MODEL_API_KEY for nano text jobs if used.
+
+Data model with Prisma
+- imports(id, filename, file_sha256, uploaded_at, row_count, status).
+- import_rows(id, import_id, row_sha256, asin, title_raw, etv_cents, received_date, category_raw, upc, serial, notes).
+- vine_items(vine_item_id, asin, title_norm, etv_cents, received_date, upc, serial, status enum: available, reserved, sold, returned, discarded, UNIQUE on asin + received_date + etv_cents + serial NULLS DISTINCT).
+- inventory_items(inventory_id, vine_item_id FK, bin_location, condition, photo_set_id, weight_oz, dims_in_l, dims_in_w, dims_in_h, hazmat_flag, privacy_passed boolean).
+- listings(listing_id, inventory_id FK, ebay_item_id, category_id, title, description, price_cents, policy_profile_id, address_profile_id, published_at, state enum: draft, live, ended).
+- orders(order_id, ebay_order_id, listing_id FK, buyer_id, sale_gross_cents, shipping_collected_cents, ebay_fees_cents, payout_cents, order_date, ship_by, tracking, carrier, status).
+- buyers(buyer_id, ebay_buyer_username, email_mask).
+- accounting_ledger(ledger_id, inventory_id FK, order_id FK, event_type enum: basis_add, sale, fee, shipping_label, label_refund, return, writeoff, payout, promotion_fee, sales_tax_collected_by_marketplace, amount_cents, direction enum: debit, credit, tx_date, note).
+- address_profiles(profile_id, label, line1, line2, city, state, zip, country, is_default boolean, kind enum: po_profile, street_profile).
+- business_policies(policy_id, label, shipping_policy_id, return_policy_id, handling_time_days).
+- photo_sets(photo_set_id, cover_url, urls JSON).
+- health_events(id, kind, severity, message, created_at).
+
+High level flows
+- Import XLSX. Normalize rows, hash each line, upsert into vine_items, generate a reconciliation report: added, unchanged, conflicts.
+- Select to Draft. Typeahead and dropdown search across title_norm, asin, upc. On selection create inventory_items and a draft listing. Pull category suggestions from eBay Taxonomy and prefill all required item specifics.
+- Unique copy. Generate three title options and one description. Reject drafts that are too similar to Amazon text using cosine similarity against provided text or prior snapshot. Block forbidden words.
+- Photos. Prompt for at least two images with option to add more. Scrub EXIF, check resolution, warn if any label or paperwork is detected by a simple OCR pass. Allow reorder and replace.
+- Approve to Publish. On Approve, upload photos to eBay Picture Services, create the offer with business policies and the safe return address profile, publish the listing, and display an estimated shipping cost computed from stored weight and dims so buyers pay shipping.
+- Orders to Labels. Webhook on order create. Pull with Fulfillment, compute rate through Shippo or EasyPost, buy label, upload tracking, email buyer, render a packing slip with only business name and return profile.
+- Messaging and Returns. Poll or webhook eBay messages. Draft replies for common requests. Handle Post Order returns with reason codes, show refund math, create return label when allowed, and update statuses.
+- Ledger. Write basis on received_date, then sale, fees, label cost, promotions, payout, and realized gain or loss per item. Record marketplace sales tax as pass through so it does not inflate your liability.
+- Exports. Monthly CSV and a one page PDF per period. Year view with payout reconciliation to eBay disbursements.
+- Dashboard. Tiles for inventory, live listings, orders, tracking, messages, return cases, sales and fees, realized gains or losses, payouts, privacy or policy alerts.
+
+UI requirements
+- Page 1 Inventory. Search box with typeahead and dropdown. Select opens a draft view.
+- Page 2 Draft listing. Category, required specifics checklist, three title options, generated description, forbidden word warnings, Amazon similarity score, shipping estimate, and photo uploader requiring at least two images.
+- Page 3 Orders. Paid, ship by, labels purchased, tracking and delivery status. Print packing slip.
+- Page 4 Messages and Returns. Inbox with canned replies, return case handling, decision buttons.
+- Page 5 Money. Sales, fees, labels, promotions, payouts, realized gain or loss. Export buttons for CSV and PDF.
+- Page 6 Health. Late shipment rate, cases, policy alerts, listing removals, weekly action list.
+
+Security and privacy
+- Never display or print a home address. Enforce address_profiles. If a publish request lacks a safe profile, block it.
+- Strip EXIF from all images. Store only URLs and small thumbnails.
+- Keep all buyer contact on platform. Do not expose real email.
+
+Slices with requirements and acceptance tests
+
+Slice 1 Import and dedupe
+- Build XLSX parser with column mapper. Normalize types, compute row_sha256.
+- Upsert vine_items with unique key on asin, received_date, etv_cents, serial.
+- Reconciliation screen with counts and a conflict_log viewer for ETV changes.
+Acceptance
+- Importing the same file twice does not increase vine_items count.
+- Importing a second file with overlap shows only added and conflict rows, never duplicates.
+- Changing ETV on an otherwise identical row creates a conflict that must be resolved.
+
+Slice 2 Select and draft listing
+- Typeahead and dropdown over vine_items by title_norm, asin, upc.
+- On selection create inventory_items and a draft listing.
+- Get category suggestions from eBay Taxonomy and prefill all required item specifics for that category. Flag missing fields in red.
+- Generate three title options and one description that avoid Amazon clones. Use a similarity gate and a forbidden word lint.
+Acceptance
+- Selecting any item yields a draft with category set, all required specifics present or flagged, and unique copy that passes similarity and privacy checks.
+
+Slice 3 Photos and Approve to Publish
+- Photo uploader that requires at least two images. EXIF scrub, resolution check, simple OCR to flag labels or receipts in frame.
+- Estimate shipping cost from stored weight and dims and display it in the draft. Buyers pay shipping using your policy choice.
+- On Approve, upload photos, create offer with business policies and correct address profile, then publish the listing.
+- Block publish if the safe return profile is missing or if copy fails lint or similarity gates.
+Acceptance
+- Approving a valid draft creates a live eBay listing with correct policies, safe address profile, visible shipping estimate, and at least two photos.
+
+Slice 4 Orders to labels
+- Webhook endpoint for order creation. Fetch order with Fulfillment.
+- Use stored weight and dims, prompt once if missing, then save.
+- Rate shop through Shippo or EasyPost, buy label, upload tracking, email buyer, and generate a packing slip that shows only business name and return profile.
+- Idempotent design so retries do not double buy labels.
+Acceptance
+- A sandbox test order results in a purchased label, uploaded tracking, buyer email, and a printable slip without any manual address edits.
+
+Slice 5 Messaging and returns
+- Poll or webhook eBay messages. Classify and draft first replies for common questions.
+- Quick actions. Address change, delivery ETA, return initiation.
+- Handle Post Order returns with reason codes, show refund math, create return label if allowed, update statuses and inventory state, and write ledger events.
+Acceptance
+- A return case can be accepted and refunded with correct fee and label math. The item status updates to returned or available as selected, and ledger entries reflect the reversal.
+
+Slice 6 Ledger and realized gain
+- Write basis_add on received_date from vine_items. On sale, record sale gross, fees, shipping label cost, promotions, payout. Compute realized gain or loss per item as sale net minus basis.
+- Show marketplace sales tax as collected by marketplace with zero net effect.
+Acceptance
+- A sample sale creates correct ledger rows. Realized gain or loss equals formula and matches the report.
+
+Slice 7 CPA packet and 1099 K reconciliation
+- Export monthly CSV and a one page PDF with fields: ASIN, product name, received date, ETV, sale date, gross, fees, label cost, net, realized gain or loss, status.
+- Year view totals and reconciliation to eBay disbursements.
+Acceptance
+- Exports match ledger totals and reconcile to payouts. A simple CPA can read the PDF and understand basis linkage.
+
+Slice 8 Account health and risk
+- Dashboard tiles for late shipment rate, cases, policy alerts, and listing removals.
+- Weekly action list that links to exact listings or orders to fix.
+- Publish time brand and claim risk checker to catch risky phrases.
+Acceptance
+- Health alerts appear before defects. Risky phrases are blocked during publish.
+
+Slice 9 Quality of life and scale
+- Bulk relist and markdown scheduler.
+- Photo checklist overlay for consistent angles.
+- Inventory bins, printable bin labels, and pick lists.
+- Role accounts and audit logs.
+Acceptance
+- Operator can list and ship quickly with logs that show who did what and when.
+
+Deliverables
+- Running app in Replit with seed scripts and sample data.
+- Postman collection for all API endpoints.
+- README with setup, env vars, and sandbox credentials.
+- Test suite that covers import dedupe, similarity gate, publish flow, order to label, ledger math, and exports.
