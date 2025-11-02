@@ -49,6 +49,8 @@ export const vineItems = pgTable("vine_items", {
   upc: text("upc"),
   serial: text("serial"),
   status: vineItemStatusEnum("status").notNull().default("available"),
+  defective: boolean("defective").notNull().default(false),
+  defectiveNotes: text("defective_notes"),
 });
 
 // Inventory items table

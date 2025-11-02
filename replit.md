@@ -70,6 +70,11 @@ Preferred communication style: Simple, everyday language.
 - Row-level hashing (SHA-256) for deduplication during imports
 - Separate `inventory_items` table to track physical condition, location, and photos independent of Vine data
 - Ledger uses event-based accounting with explicit event types for different transaction categories
+- **Defective Item Tracking:** `vine_items` includes `defective` boolean and `defectiveNotes` text fields for tax reporting
+  - Items can be manually marked as defective from the inventory page
+  - Returns automatically mark items as defective with "Returned by buyer" note
+  - Defective status appears in accounting CSV exports alongside transaction data
+  - Tax benefit: Defective items can be excluded from taxable income calculations by your CPA
 
 ### Authentication & Authorization
 

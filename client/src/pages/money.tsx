@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { DollarSign, TrendingUp, TrendingDown, Download, FileText } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, Download, FileText, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,6 +9,7 @@ import type { AccountingLedger } from "@shared/schema";
 
 interface LedgerEntry extends AccountingLedger {
   itemTitle?: string;
+  defective?: boolean;
 }
 
 interface MoneyStats {
@@ -210,8 +211,16 @@ export default function MoneyPage() {
                         <TableCell className="font-mono text-sm" data-testid={`text-date-${entry.ledgerId}`}>
                           {new Date(entry.txDate).toLocaleDateString()}
                         </TableCell>
-                        <TableCell className="max-w-xs truncate" data-testid={`text-item-${entry.ledgerId}`}>
-                          {entry.itemTitle || "-"}
+                        <TableCell className="max-w-xs" data-testid={`text-item-${entry.ledgerId}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{entry.itemTitle || "-"}</span>
+                            {entry.defective && (
+                              <Badge variant="destructive" size="sm" data-testid={`badge-defective-${entry.ledgerId}`}>
+                                <AlertTriangle className="w-3 h-3 mr-1" />
+                                Defective
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" data-testid={`badge-event-${entry.ledgerId}`}>

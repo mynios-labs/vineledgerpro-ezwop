@@ -100,6 +100,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Mark item as defective or not
+  app.patch("/api/vine-items/:id/defective", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { defective, defectiveNotes } = req.body;
+
+      // Validate input
+      if (typeof defective !== "boolean") {
+        return res.status(400).json({ error: "defective must be a boolean" });
+      }
+
+      // Update the item
+      const updated = await db.update(vineItems)
+        .set({ 
+          defective, 
+          defectiveNotes: defectiveNotes || null 
+        })
+        .where(eq(vineItems.vineItemId, id))
+        .returning();
+
+      if (updated.length === 0) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      res.json(updated[0]);
+    } catch (error: any) {
+      console.error("Error marking item as defective:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Upload and process XLSX file
   app.post("/api/imports/upload", upload.single("file"), async (req, res) => {
     try {
@@ -558,10 +589,60 @@ Return ONLY valid JSON (no markdown, no extra text):
   // Handle return action
   app.post("/api/returns/action", async (req, res) => {
     try {
-      const { caseId, action } = req.body;
-      // In production, would process via eBay Post-Order API
+      const { orderId, action, refundCents } = req.body;
+      
+      if (!orderId || !action) {
+        return res.status(400).json({ error: "orderId and action required" });
+      }
+
+      // Get the order with its listing and inventory
+      const [order] = await db
+        .select({
+          orderId: orders.orderId,
+          listingId: orders.listingId,
+          inventoryId: listings.inventoryId,
+          vineItemId: inventoryItems.vineItemId,
+          saleGrossCents: orders.saleGrossCents,
+        })
+        .from(orders)
+        .innerJoin(listings, eq(orders.listingId, listings.listingId))
+        .innerJoin(inventoryItems, eq(listings.inventoryId, inventoryItems.inventoryId))
+        .where(eq(orders.orderId, orderId));
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      if (action === "accept_return" || action === "refund") {
+        // Mark the order as refunded
+        await db.update(orders)
+          .set({ status: "refunded" })
+          .where(eq(orders.orderId, orderId));
+
+        // Mark the vine item as defective and returned
+        await db.update(vineItems)
+          .set({ 
+            defective: true,
+            defectiveNotes: "Returned by buyer",
+            status: "returned"
+          })
+          .where(eq(vineItems.vineItemId, order.vineItemId));
+
+        // Create return ledger entry to reverse the sale
+        await db.insert(accountingLedger).values({
+          inventoryId: order.inventoryId,
+          orderId: order.orderId,
+          eventType: "return",
+          amountCents: refundCents || order.saleGrossCents,
+          direction: "debit",
+          note: "Item returned - marked as defective",
+        });
+      }
+
+      // In production, would also process via eBay Post-Order API
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Error handling return:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -620,8 +701,21 @@ Return ONLY valid JSON (no markdown, no extra text):
   app.get("/api/accounting/ledger", async (_req, res) => {
     try {
       const entries = await db
-        .select()
+        .select({
+          ledgerId: accountingLedger.ledgerId,
+          inventoryId: accountingLedger.inventoryId,
+          orderId: accountingLedger.orderId,
+          eventType: accountingLedger.eventType,
+          amountCents: accountingLedger.amountCents,
+          direction: accountingLedger.direction,
+          txDate: accountingLedger.txDate,
+          note: accountingLedger.note,
+          itemTitle: vineItems.titleNorm,
+          defective: vineItems.defective,
+        })
         .from(accountingLedger)
+        .leftJoin(inventoryItems, eq(accountingLedger.inventoryId, inventoryItems.inventoryId))
+        .leftJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
         .orderBy(desc(accountingLedger.txDate))
         .limit(100);
 
@@ -634,12 +728,31 @@ Return ONLY valid JSON (no markdown, no extra text):
   // Export CSV
   app.get("/api/accounting/export/csv", async (_req, res) => {
     try {
-      const entries = await db.select().from(accountingLedger);
+      // Get all ledger entries with related item information
+      const entries = await db
+        .select({
+          ledgerId: accountingLedger.ledgerId,
+          txDate: accountingLedger.txDate,
+          eventType: accountingLedger.eventType,
+          amountCents: accountingLedger.amountCents,
+          direction: accountingLedger.direction,
+          note: accountingLedger.note,
+          inventoryId: accountingLedger.inventoryId,
+          orderId: accountingLedger.orderId,
+          vineItemId: inventoryItems.vineItemId,
+          titleNorm: vineItems.titleNorm,
+          defective: vineItems.defective,
+          defectiveNotes: vineItems.defectiveNotes,
+        })
+        .from(accountingLedger)
+        .leftJoin(inventoryItems, eq(accountingLedger.inventoryId, inventoryItems.inventoryId))
+        .leftJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+        .orderBy(desc(accountingLedger.txDate));
       
       const csv = [
-        "Date,Event,Amount,Direction,Note",
+        "Date,Event,Amount,Direction,Item Title,Defective,Defective Notes,Note",
         ...entries.map((e) =>
-          `${e.txDate},"${e.eventType}",${e.amountCents / 100},"${e.direction}","${e.note || ""}"`
+          `${e.txDate},"${e.eventType}",${e.amountCents / 100},"${e.direction}","${e.titleNorm || ""}","${e.defective ? "YES" : "NO"}","${e.defectiveNotes || ""}","${e.note || ""}"`
         ),
       ].join("\n");
 
