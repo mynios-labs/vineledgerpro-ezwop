@@ -242,19 +242,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Generate unique titles and description using AI
       const completion = await openai.chat.completions.create({
-        model: "gpt-5-nano",
+        model: "gpt-5",
         messages: [
           {
             role: "system",
-            content: "You are a product listing copywriter. Generate unique, SEO-friendly eBay listing copy. NEVER mention Amazon, Vine, reviews, promotional items, or any connection to free products. Return JSON only.",
+            content: "You are an expert eBay listing copywriter who creates compelling, SEO-optimized product listings. Generate unique, enticing titles that highlight different aspects of the product. NEVER mention Amazon, Vine, reviews, promotional items, or any connection to free products. Return JSON only.",
           },
           {
             role: "user",
-            content: `Generate 3 unique title variations and 1 description for: "${item.titleNorm}". Keep titles under 80 characters. Avoid any words related to: vine, amazon, review, promo, free, sample. Format as JSON: {"titles": ["title1", "title2", "title3"], "description": "description text"}`,
+            content: `Create 3 COMPLETELY DIFFERENT and enticing title variations for this product: "${item.titleNorm}". 
+
+Requirements:
+- Each title must be UNIQUE and emphasize different selling points (e.g., title 1: focus on quality/brand, title 2: focus on features/benefits, title 3: focus on value/use case)
+- Keep each title under 80 characters
+- Make titles compelling and SEO-friendly
+- Use power words that drive sales (Premium, Professional, High-Quality, etc.)
+- NEVER use these words: vine, amazon, review, promo, free, sample, received
+
+Also create 1 detailed, enticing product description (3-5 sentences) that:
+- Highlights key features and benefits
+- Creates desire to purchase
+- Maintains privacy (no mention of Amazon/Vine)
+- Is professional and trustworthy
+
+Return as JSON: {"titles": ["unique_title_1", "unique_title_2", "unique_title_3"], "description": "compelling description text"}`,
           },
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: 1000,
+        max_completion_tokens: 1500,
+        temperature: 0.9,
       });
 
       const generated = JSON.parse(completion.choices[0].message.content || "{}");
@@ -489,7 +505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/messages", async (_req, res) => {
     try {
       // Mock messages - in production would fetch from eBay API
-      const messages = [];
+      const messages: any[] = [];
       res.json(messages);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -511,7 +527,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/returns", async (_req, res) => {
     try {
       // Mock returns - in production would fetch from eBay Post-Order API
-      const returnCases = [];
+      const returnCases: any[] = [];
       res.json(returnCases);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
