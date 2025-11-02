@@ -190,13 +190,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(sheet);
 
+      // Skip first row (header row that was parsed as data)
+      const actualData = data.slice(1);
+
       // Create import record
       const [importRecord] = await db
         .insert(imports)
         .values({
           filename: req.file.originalname,
           fileSha256,
-          rowCount: data.length,
+          rowCount: actualData.length,
           status: "processing",
         })
         .returning();
@@ -206,11 +209,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let conflicts = 0;
 
       // Process each row
-      for (const row of data as any[]) {
-        const asin = row.ASIN || row.asin || "";
-        const titleRaw = row.Title || row.title || "";
-        const etvCents = Math.round((parseFloat(row.ETV || row.etv || "0") || 0) * 100);
-        const receivedDate = row["Received Date"] || row.receivedDate || new Date().toISOString();
+      for (const row of actualData as any[]) {
+        // Map Amazon Vine report columns
+        const asin = row.__EMPTY || row.ASIN || row.asin || "";
+        const titleRaw = row.__EMPTY_1 || row["Product Name"] || row.Title || row.title || "";
+        const etvValue = row.__EMPTY_6 || row["Estimated Tax Value"] || row.ETV || row.etv || "0";
+        const etvCents = Math.round((parseFloat(etvValue) || 0) * 100);
+        const orderDate = row.__EMPTY_3 || row["Order Date"] || row.receivedDate || "";
+        const shippedDate = row.__EMPTY_4 || row["Shipped Date"] || "";
+        const receivedDate = shippedDate || orderDate || new Date().toISOString();
         const categoryRaw = row.Category || row.category || "";
         const upc = row.UPC || row.upc || null;
         const serial = row.Serial || row.serial || null;
