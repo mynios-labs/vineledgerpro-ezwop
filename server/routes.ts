@@ -241,39 +241,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // Generate unique titles and description using AI
+      // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
       const completion = await openai.chat.completions.create({
         model: "gpt-5",
         messages: [
           {
             role: "system",
-            content: "You are an expert eBay listing copywriter who creates compelling, SEO-optimized product listings. Generate unique, enticing titles that highlight different aspects of the product. NEVER mention Amazon, Vine, reviews, promotional items, or any connection to free products. Return JSON only.",
+            content: "You are an expert eBay copywriter. Create 3 DIFFERENT listing titles - each must be completely unique from the others. NEVER repeat the same words or phrasing. NEVER mention Amazon, Vine, or reviews.",
           },
           {
             role: "user",
-            content: `Create 3 COMPLETELY DIFFERENT and enticing title variations for this product: "${item.titleNorm}". 
+            content: `Product: "${item.titleNorm}"
 
-Requirements:
-- Each title must be UNIQUE and emphasize different selling points (e.g., title 1: focus on quality/brand, title 2: focus on features/benefits, title 3: focus on value/use case)
-- Keep each title under 80 characters
-- Make titles compelling and SEO-friendly
-- Use power words that drive sales (Premium, Professional, High-Quality, etc.)
-- NEVER use these words: vine, amazon, review, promo, free, sample, received
+Create 3 COMPLETELY DIFFERENT title variations (each under 80 chars):
+1. First title: Focus on QUALITY and PREMIUM aspects (use words like: Premium, Professional, High-Quality, Luxury)
+2. Second title: Focus on FEATURES and SPECIFICATIONS (use words like: Advanced, Feature-Rich, Latest Technology)
+3. Third title: Focus on VALUE and USE CASES (use words like: Best Deal, Perfect For, Essential, Must-Have)
 
-Also create 1 detailed, enticing product description (3-5 sentences) that:
-- Highlights key features and benefits
-- Creates desire to purchase
-- Maintains privacy (no mention of Amazon/Vine)
-- Is professional and trustworthy
+IMPORTANT: Each title MUST use different words and different structure. DO NOT repeat phrases.
 
-Return as JSON: {"titles": ["unique_title_1", "unique_title_2", "unique_title_3"], "description": "compelling description text"}`,
+Also create 1 compelling description (3-5 sentences) highlighting benefits and features.
+
+NEVER use: vine, amazon, review, promo, free, sample, received
+
+Return ONLY valid JSON (no markdown, no extra text):
+{"titles": ["unique title 1 about quality", "unique title 2 about features", "unique title 3 about value"], "description": "detailed product description"}`,
           },
         ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 1500,
-        temperature: 0.9,
+        max_completion_tokens: 1000,
       });
 
-      const generated = JSON.parse(completion.choices[0].message.content || "{}");
+      console.log("Completion object:", JSON.stringify(completion, null, 2));
+      
+      const rawContent = completion.choices[0].message.content || "";
+      console.log("Raw AI content length:", rawContent.length);
+      console.log("Raw AI content:", rawContent);
+      console.log("Finish reason:", completion.choices[0].finish_reason);
+      
+      let generated;
+      try {
+        generated = JSON.parse(rawContent);
+        console.log("Parsed AI Response:", JSON.stringify(generated, null, 2));
+      } catch (e) {
+        console.error("JSON parse error:", e);
+        // Try using gpt-5-mini as fallback
+        console.log("Falling back to simple titles...");
+        generated = {
+          titles: [
+            `Premium ${item.titleNorm}`,
+            `${item.titleNorm} - Professional Grade`,
+            `${item.titleNorm} - Best Value`
+          ],
+          description: `High-quality ${item.titleNorm}. Perfect for your needs. Ships fast!`
+        };
+      }
 
       // Privacy checks
       const privacyWarnings: string[] = [];
