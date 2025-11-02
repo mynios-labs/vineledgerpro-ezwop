@@ -50,6 +50,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         available: result.find((r) => r.status === "available")?.count || 0,
         reserved: result.find((r) => r.status === "reserved")?.count || 0,
         sold: result.find((r) => r.status === "sold")?.count || 0,
+        do_not_sell: result.find((r) => r.status === "do_not_sell")?.count || 0,
+        gone: result.find((r) => r.status === "gone")?.count || 0,
+        returned: result.find((r) => r.status === "returned")?.count || 0,
+        discarded: result.find((r) => r.status === "discarded")?.count || 0,
       };
 
       res.json(stats);
@@ -127,6 +131,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updated[0]);
     } catch (error: any) {
       console.error("Error marking item as defective:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update item status (available, do_not_sell, gone)
+  app.patch("/api/vine-items/:id/status", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      // Validate status
+      const validStatuses = ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone"];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      // Update the item
+      const updated = await db.update(vineItems)
+        .set({ status })
+        .where(eq(vineItems.vineItemId, id))
+        .returning();
+
+      if (updated.length === 0) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      res.json(updated[0]);
+    } catch (error: any) {
+      console.error("Error updating item status:", error);
       res.status(500).json({ error: error.message });
     }
   });
