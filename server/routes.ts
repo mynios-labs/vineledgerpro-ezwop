@@ -360,6 +360,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // List all imports with stats
+  app.get("/api/imports", async (_req, res) => {
+    try {
+      const allImports = await db
+        .select()
+        .from(imports)
+        .orderBy(desc(imports.createdAt));
+      
+      res.json(allImports);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete a specific import and its related data
+  app.delete("/api/imports/:importId", async (req, res) => {
+    try {
+      const { importId } = req.params;
+
+      // Delete import_rows for this import
+      await db
+        .delete(importRows)
+        .where(eq(importRows.importId, parseInt(importId)));
+
+      // Delete import_conflicts for this import
+      await db
+        .delete(importConflicts)
+        .where(eq(importConflicts.importId, parseInt(importId)));
+
+      // Delete the import itself
+      const deleted = await db
+        .delete(imports)
+        .where(eq(imports.id, parseInt(importId)))
+        .returning();
+
+      if (deleted.length === 0) {
+        return res.status(404).json({ error: "Import not found" });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Clear ALL data from all tables (nuclear option)
+  app.post("/api/imports/clear-all", async (_req, res) => {
+    try {
+      // Delete in correct order to respect foreign key constraints
+      await db.delete(importConflicts);
+      await db.delete(importRows);
+      await db.delete(imports);
+      await db.delete(listings);
+      await db.delete(inventoryItems);
+      await db.delete(vineItems);
+      await db.delete(orders);
+      await db.delete(buyers);
+      await db.delete(accountingLedger);
+      await db.delete(healthEvents);
+      await db.delete(photoSets);
+      await db.delete(addressProfiles);
+      await db.delete(businessPolicies);
+
+      res.json({ success: true, message: "All data cleared" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Generate listing copy with AI
   app.get("/api/listings/generate-copy", async (req, res) => {
     try {
