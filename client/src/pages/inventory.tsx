@@ -29,11 +29,12 @@ export default function Inventory() {
   
   const itemsPerPage = 20;
 
-  // Build query string with search and sort parameters
+  // Build query string with search, sort, and status parameters
   const buildQueryString = () => {
     const params = new URLSearchParams();
     if (searchQuery) params.set("search", searchQuery);
     if (sortOrder) params.set("sort", sortOrder);
+    if (activeTab) params.set("status", activeTab);
     const queryString = params.toString();
     return queryString ? `?${queryString}` : "";
   };
@@ -112,8 +113,8 @@ export default function Inventory() {
     },
   });
 
-  // Filter items by status tab
-  const filteredItems = vineItems?.filter(item => item.status === activeTab) || [];
+  // Items are already filtered by status on the backend
+  const filteredItems = vineItems || [];
 
   // Paginate items
   const totalPages = Math.ceil(filteredItems.length / itemsPerPage);

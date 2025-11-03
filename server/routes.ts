@@ -63,21 +63,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get vine items (with search and sort)
+  // Get vine items (with search, sort, and status filter)
   app.get("/api/vine-items", async (req, res) => {
     try {
-      const { search, sort } = req.query;
+      const { search, sort, status } = req.query;
       
       let query = db.select().from(vineItems);
       
+      // Apply status filter
+      if (status && typeof status === "string") {
+        query = query.where(eq(vineItems.status, status)) as any;
+      }
+      
+      // Apply search filter (combine with status if both present)
       if (search && typeof search === "string") {
-        query = query.where(
-          or(
-            like(vineItems.titleNorm, `%${search}%`),
-            like(vineItems.asin, `%${search}%`),
-            like(vineItems.upc, `%${search}%`)
-          )
-        ) as any;
+        const searchCondition = or(
+          like(vineItems.titleNorm, `%${search}%`),
+          like(vineItems.asin, `%${search}%`),
+          like(vineItems.upc, `%${search}%`)
+        );
+        
+        if (status && typeof status === "string") {
+          // Both status and search filters
+          query = db.select().from(vineItems).where(
+            and(
+              eq(vineItems.status, status),
+              searchCondition
+            )
+          ) as any;
+        } else {
+          // Only search filter
+          query = query.where(searchCondition) as any;
+        }
       }
 
       // Sort by received date: "recent" (desc) or "oldest" (asc)
