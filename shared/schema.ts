@@ -158,6 +158,20 @@ export const healthEvents = pgTable("health_events", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Import conflicts table
+export const importConflicts = pgTable("import_conflicts", {
+  conflictId: varchar("conflict_id").primaryKey().default(sql`gen_random_uuid()`),
+  importId: varchar("import_id").notNull().references(() => imports.id, { onDelete: "cascade" }),
+  vineItemId: varchar("vine_item_id").notNull().references(() => vineItems.vineItemId, { onDelete: "cascade" }),
+  asin: text("asin").notNull(),
+  titleNorm: text("title_norm").notNull(),
+  receivedDate: timestamp("received_date").notNull(),
+  existingEtvCents: integer("existing_etv_cents").notNull(),
+  newEtvCents: integer("new_etv_cents").notNull(),
+  resolved: boolean("resolved").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Relations
 export const importsRelations = relations(imports, ({ many }) => ({
   rows: many(importRows),
@@ -227,6 +241,7 @@ export const insertAddressProfileSchema = createInsertSchema(addressProfiles).om
 export const insertBusinessPolicySchema = createInsertSchema(businessPolicies).omit({ policyId: true });
 export const insertPhotoSetSchema = createInsertSchema(photoSets).omit({ photoSetId: true });
 export const insertHealthEventSchema = createInsertSchema(healthEvents).omit({ id: true, createdAt: true });
+export const insertImportConflictSchema = createInsertSchema(importConflicts).omit({ conflictId: true, createdAt: true });
 
 // Types
 export type Import = typeof imports.$inferSelect;
@@ -253,3 +268,5 @@ export type PhotoSet = typeof photoSets.$inferSelect;
 export type InsertPhotoSet = z.infer<typeof insertPhotoSetSchema>;
 export type HealthEvent = typeof healthEvents.$inferSelect;
 export type InsertHealthEvent = z.infer<typeof insertHealthEventSchema>;
+export type ImportConflict = typeof importConflicts.$inferSelect;
+export type InsertImportConflict = z.infer<typeof insertImportConflictSchema>;

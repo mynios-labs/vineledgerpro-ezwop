@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import NotFound from "@/pages/not-found";
 import Inventory from "@/pages/inventory";
 import ImportPage from "@/pages/import";
+import ConflictsPage from "@/pages/conflicts";
 import DraftPage from "@/pages/draft";
 import OrdersPage from "@/pages/orders";
 import MessagesPage from "@/pages/messages";
@@ -20,6 +21,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Inventory} />
       <Route path="/import" component={ImportPage} />
+      <Route path="/conflicts" component={ConflictsPage} />
       <Route path="/draft" component={DraftPage} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/messages" component={MessagesPage} />

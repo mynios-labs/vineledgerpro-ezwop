@@ -19,6 +19,7 @@ import {
   businessPolicies,
   photoSets,
   healthEvents,
+  importConflicts,
   type InsertImport,
   type InsertImportRow,
   type InsertVineItem,
@@ -222,6 +223,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const upc = row.UPC || row.upc || null;
         const serial = row.Serial || row.serial || null;
 
+        // Skip empty rows (no ASIN and no title)
+        if (!asin && !titleRaw) {
+          continue;
+        }
+
         const rowSha256 = crypto
           .createHash("sha256")
           .update(`${asin}${titleRaw}${etvCents}${receivedDate}`)
@@ -264,7 +270,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
           added++;
         } else if (existingItem.etvCents !== etvCents) {
-          // Conflict - ETV changed
+          // Conflict - ETV changed - store in conflicts table
+          await db.insert(importConflicts).values({
+            importId: importRecord.id,
+            vineItemId: existingItem.vineItemId,
+            asin,
+            titleNorm: titleRaw,
+            receivedDate: new Date(receivedDate),
+            existingEtvCents: existingItem.etvCents,
+            newEtvCents: etvCents,
+            resolved: false,
+          });
           conflicts++;
         } else {
           // Unchanged
@@ -282,6 +298,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
         importId: importRecord.id,
         reconciliation: { added, unchanged, conflicts },
       });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get unresolved conflicts
+  app.get("/api/conflicts", async (_req, res) => {
+    try {
+      const conflicts = await db
+        .select()
+        .from(importConflicts)
+        .where(eq(importConflicts.resolved, false))
+        .orderBy(desc(importConflicts.createdAt));
+      
+      res.json(conflicts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resolve a conflict by updating the vine item's ETV
+  app.post("/api/conflicts/:conflictId/resolve", async (req, res) => {
+    try {
+      const { conflictId } = req.params;
+      const { selectedEtvCents } = req.body;
+
+      if (typeof selectedEtvCents !== "number") {
+        return res.status(400).json({ error: "selectedEtvCents must be a number" });
+      }
+
+      // Get the conflict
+      const [conflict] = await db
+        .select()
+        .from(importConflicts)
+        .where(eq(importConflicts.conflictId, conflictId));
+
+      if (!conflict) {
+        return res.status(404).json({ error: "Conflict not found" });
+      }
+
+      if (conflict.resolved) {
+        return res.status(400).json({ error: "Conflict already resolved" });
+      }
+
+      // Update the vine item's ETV
+      await db
+        .update(vineItems)
+        .set({ etvCents: selectedEtvCents })
+        .where(eq(vineItems.vineItemId, conflict.vineItemId));
+
+      // Mark conflict as resolved
+      await db
+        .update(importConflicts)
+        .set({ resolved: true })
+        .where(eq(importConflicts.conflictId, conflictId));
+
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

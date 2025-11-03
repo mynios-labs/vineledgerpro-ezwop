@@ -174,8 +174,16 @@ export default function ImportPage() {
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Conflicts Detected</AlertTitle>
-            <AlertDescription>
-              {reconciliation.conflicts} items have conflicting ETV values. Please review and resolve these conflicts manually.
+            <AlertDescription className="space-y-3">
+              <p>{reconciliation.conflicts} items have conflicting ETV values. Please review and resolve these conflicts.</p>
+              <Button
+                variant="outline"
+                className="mt-2"
+                onClick={() => setLocation("/conflicts")}
+                data-testid="button-resolve-conflicts"
+              >
+                Resolve Conflicts
+              </Button>
             </AlertDescription>
           </Alert>
         )}
