@@ -366,7 +366,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allImports = await db
         .select()
         .from(imports)
-        .orderBy(desc(imports.createdAt));
+        .orderBy(desc(imports.uploadedAt));
       
       res.json(allImports);
     } catch (error: any) {
@@ -382,17 +382,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Delete import_rows for this import
       await db
         .delete(importRows)
-        .where(eq(importRows.importId, parseInt(importId)));
+        .where(eq(importRows.importId, importId));
 
       // Delete import_conflicts for this import
       await db
         .delete(importConflicts)
-        .where(eq(importConflicts.importId, parseInt(importId)));
+        .where(eq(importConflicts.importId, importId));
 
       // Delete the import itself
       const deleted = await db
         .delete(imports)
-        .where(eq(imports.id, parseInt(importId)))
+        .where(eq(imports.id, importId))
         .returning();
 
       if (deleted.length === 0) {
