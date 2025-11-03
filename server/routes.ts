@@ -174,6 +174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const fileBuffer = req.file.buffer;
       const fileSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+      const fileContentBase64 = fileBuffer.toString("base64");
 
       // Check if file already imported
       const [existing] = await db
@@ -200,6 +201,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .values({
           filename: req.file.originalname,
           fileSha256,
+          fileContentBase64,
           rowCount: actualData.length,
           status: "processing",
         })
