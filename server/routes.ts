@@ -545,10 +545,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // Generate unique titles and description using AI
-      // Using gpt-4.1 instead of gpt-5 because gpt-5 uses reasoning tokens and returns empty content
-      // gpt-4.1 is reliable, fast, and produces excellent eBay-friendly copy
+      // Using gpt-4.1-mini for cost efficiency - produces excellent eBay-friendly copy
       const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
+        model: "gpt-4.1-mini",
         messages: [
           {
             role: "system",
@@ -613,10 +612,10 @@ Output ONLY this JSON structure (no markdown, no backticks):
         console.error("JSON parse error:", e);
         console.log("Attempting fallback with gpt-5-mini...");
         
-        // Fallback: Try with simpler model
+        // Fallback: Try with nano model
         try {
           const fallbackCompletion = await openai.chat.completions.create({
-            model: "gpt-5-mini",
+            model: "gpt-4.1-nano",
             messages: [
               {
                 role: "system",
