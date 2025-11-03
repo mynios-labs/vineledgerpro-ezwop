@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
-import { eq, desc, and, or, like, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, sql } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
@@ -63,10 +63,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get vine items (with search)
+  // Get vine items (with search and sort)
   app.get("/api/vine-items", async (req, res) => {
     try {
-      const { search } = req.query;
+      const { search, sort } = req.query;
       
       let query = db.select().from(vineItems);
       
@@ -80,7 +80,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ) as any;
       }
 
-      const items = await query.orderBy(desc(vineItems.receivedDate)).limit(100);
+      // Sort by received date: "recent" (desc) or "oldest" (asc)
+      const sortOrder = sort === "oldest" ? asc : desc;
+      const items = await query.orderBy(sortOrder(vineItems.receivedDate)).limit(100);
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

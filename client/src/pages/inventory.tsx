@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Upload, Package, AlertCircle, AlertTriangle, X, Check, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Upload, Package, AlertCircle, AlertTriangle, X, Check, Trash2, ChevronLeft, ChevronRight, ArrowDownUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,26 +10,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VineItem } from "@shared/schema";
 
 type StatusTab = "available" | "do_not_sell" | "gone";
+type SortOrder = "recent" | "oldest";
 
 export default function Inventory() {
   const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("recent");
   const [activeTab, setActiveTab] = useState<StatusTab>("available");
   const [currentPage, setCurrentPage] = useState(1);
   const { toast } = useToast();
   
   const itemsPerPage = 20;
 
+  // Build query string with search and sort parameters
+  const buildQueryString = () => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("search", searchQuery);
+    if (sortOrder) params.set("sort", sortOrder);
+    const queryString = params.toString();
+    return queryString ? `?${queryString}` : "";
+  };
+
   const { data: vineItems, isLoading } = useQuery<VineItem[]>({
-    queryKey: searchQuery 
-      ? [`/api/vine-items?search=${encodeURIComponent(searchQuery)}`]
-      : ["/api/vine-items"],
+    queryKey: [`/api/vine-items${buildQueryString()}`],
   });
 
   const { data: stats } = useQuery<{
@@ -210,17 +220,29 @@ export default function Inventory() {
           </Card>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search by title, ASIN, or UPC..."
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            className="pl-9"
-            data-testid="input-search"
-          />
+        {/* Search and Sort */}
+        <div className="flex flex-col gap-3 md:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search by title, ASIN, or UPC..."
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-9"
+              data-testid="input-search"
+            />
+          </div>
+          <Select value={sortOrder} onValueChange={(value: SortOrder) => setSortOrder(value)}>
+            <SelectTrigger className="w-full md:w-40" data-testid="select-sort">
+              <ArrowDownUp className="w-4 h-4 mr-2" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent" data-testid="option-recent">Recent First</SelectItem>
+              <SelectItem value="oldest" data-testid="option-oldest">Oldest First</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Tabs for status filtering */}
