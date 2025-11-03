@@ -1,4 +1,4 @@
-import { Home, Package, ShoppingCart, MessageSquare, DollarSign, Activity } from "lucide-react";
+import { Home, Package, ShoppingCart, MessageSquare, DollarSign, Activity, Database } from "lucide-react";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Link, useLocation } from "wouter";
 
@@ -32,6 +32,11 @@ const menuItems = [
     title: "Health",
     url: "/health",
     icon: Activity,
+  },
+  {
+    title: "Manage Data",
+    url: "/manage",
+    icon: Database,
   },
 ];
 

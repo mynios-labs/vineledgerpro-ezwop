@@ -10,6 +10,7 @@ import NotFound from "@/pages/not-found";
 import Inventory from "@/pages/inventory";
 import ImportPage from "@/pages/import";
 import ConflictsPage from "@/pages/conflicts";
+import ManagePage from "@/pages/manage";
 import DraftPage from "@/pages/draft";
 import OrdersPage from "@/pages/orders";
 import MessagesPage from "@/pages/messages";
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/" component={Inventory} />
       <Route path="/import" component={ImportPage} />
       <Route path="/conflicts" component={ConflictsPage} />
+      <Route path="/manage" component={ManagePage} />
       <Route path="/draft" component={DraftPage} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/messages" component={MessagesPage} />
