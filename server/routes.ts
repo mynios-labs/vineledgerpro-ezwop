@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
-import { eq, desc, asc, and, or, like, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, ilike, sql } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
@@ -78,9 +78,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Apply search filter (combine with status if both present)
       if (search && typeof search === "string") {
         const searchCondition = or(
-          like(vineItems.titleNorm, `%${search}%`),
-          like(vineItems.asin, `%${search}%`),
-          like(vineItems.upc, `%${search}%`)
+          ilike(vineItems.titleNorm, `%${search}%`),
+          ilike(vineItems.asin, `%${search}%`),
+          ilike(vineItems.upc, `%${search}%`)
         );
         
         if (status && typeof status === "string") {
