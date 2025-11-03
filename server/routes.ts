@@ -366,11 +366,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/imports", async (_req, res) => {
     try {
       const allImports = await db
-        .select()
+        .select({
+          id: imports.id,
+          filename: imports.filename,
+          fileSha256: imports.fileSha256,
+          uploadedAt: imports.uploadedAt,
+          rowCount: imports.rowCount,
+          status: imports.status,
+        })
         .from(imports)
         .orderBy(desc(imports.uploadedAt));
       
       res.json(allImports);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Download original XLSX file
+  app.get("/api/imports/:importId/download", async (req, res) => {
+    try {
+      const { importId } = req.params;
+
+      const [importRecord] = await db
+        .select()
+        .from(imports)
+        .where(eq(imports.id, importId));
+
+      if (!importRecord) {
+        return res.status(404).json({ error: "Import not found" });
+      }
+
+      // Decode base64 to buffer
+      const fileBuffer = Buffer.from(importRecord.fileContentBase64, "base64");
+
+      // Set headers for file download
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${importRecord.filename}"`);
+      res.send(fileBuffer);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get import details with all rows
+  app.get("/api/imports/:importId/details", async (req, res) => {
+    try {
+      const { importId } = req.params;
+
+      const [importRecord] = await db
+        .select({
+          id: imports.id,
+          filename: imports.filename,
+          uploadedAt: imports.uploadedAt,
+          rowCount: imports.rowCount,
+          status: imports.status,
+        })
+        .from(imports)
+        .where(eq(imports.id, importId));
+
+      if (!importRecord) {
+        return res.status(404).json({ error: "Import not found" });
+      }
+
+      // Get all rows for this import
+      const rows = await db
+        .select()
+        .from(importRows)
+        .where(eq(importRows.importId, importId))
+        .limit(100); // Limit to first 100 rows for preview
+
+      res.json({
+        import: importRecord,
+        rows,
+        hasMore: importRecord.rowCount > 100,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
