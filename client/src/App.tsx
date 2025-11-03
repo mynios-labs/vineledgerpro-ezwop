@@ -11,6 +11,7 @@ import Inventory from "@/pages/inventory";
 import ImportPage from "@/pages/import";
 import ConflictsPage from "@/pages/conflicts";
 import ManagePage from "@/pages/manage";
+import ImportDetailsPage from "@/pages/import-details";
 import DraftPage from "@/pages/draft";
 import OrdersPage from "@/pages/orders";
 import MessagesPage from "@/pages/messages";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/import" component={ImportPage} />
       <Route path="/conflicts" component={ConflictsPage} />
       <Route path="/manage" component={ManagePage} />
+      <Route path="/manage/:importId" component={ImportDetailsPage} />
       <Route path="/draft" component={DraftPage} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/messages" component={MessagesPage} />

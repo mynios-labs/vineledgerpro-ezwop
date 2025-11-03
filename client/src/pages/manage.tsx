@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Trash2, AlertTriangle, Database } from "lucide-react";
+import { Download, Eye, AlertTriangle, Database } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -188,46 +188,35 @@ export default function ManagePage() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="text-sm text-muted-foreground">
                       {importRecord.rowCount} rows processed
                     </div>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          data-testid={`button-delete-${importRecord.id}`}
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        asChild
+                        data-testid={`button-download-${importRecord.id}`}
+                      >
+                        <a 
+                          href={`/api/imports/${importRecord.id}/download`}
+                          download={importRecord.filename}
                         >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete Import
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Import?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will delete the import record and all associated import rows. 
-                            Vine items created from this import will NOT be deleted.
-                            <br /><br />
-                            <span className="font-semibold text-foreground">File: {importRecord.filename}</span>
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel data-testid={`button-cancel-delete-${importRecord.id}`}>
-                            Cancel
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => deleteImportMutation.mutate(importRecord.id)}
-                            disabled={deleteImportMutation.isPending}
-                            className="bg-destructive hover:bg-destructive/90"
-                            data-testid={`button-confirm-delete-${importRecord.id}`}
-                          >
-                            Delete Import
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </a>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(`/manage/${importRecord.id}`, '_blank')}
+                        data-testid={`button-view-${importRecord.id}`}
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        View Details
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
