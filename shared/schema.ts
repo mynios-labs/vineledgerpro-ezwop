@@ -19,6 +19,7 @@ export const imports = pgTable("imports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   filename: text("filename").notNull(),
   fileSha256: text("file_sha256").notNull().unique(),
+  fileContentBase64: text("file_content_base64").notNull(),
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
   rowCount: integer("row_count").notNull().default(0),
   status: importStatusEnum("status").notNull().default("processing"),
