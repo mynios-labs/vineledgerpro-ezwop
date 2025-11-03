@@ -29,6 +29,7 @@ export default function DraftPage() {
   const [dimsL, setDimsL] = useState("");
   const [dimsW, setDimsW] = useState("");
   const [dimsH, setDimsH] = useState("");
+  const [regenerateCount, setRegenerateCount] = useState(0);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -40,7 +41,7 @@ export default function DraftPage() {
     enabled: !!listingId,
   });
 
-  const { data: titleSuggestions, refetch: regenerateTitles, isLoading: generatingTitles } = useQuery<{
+  const { data: titleSuggestions, isLoading: generatingTitles } = useQuery<{
     titles: string[];
     description: string;
     categoryId: string;
@@ -48,9 +49,15 @@ export default function DraftPage() {
     privacyWarnings: string[];
     similarityScore: number;
   }>({
-    queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}`],
+    queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}&_refresh=${regenerateCount}`],
     enabled: !!vineItemId,
+    staleTime: 0,
   });
+
+  const regenerateTitles = () => {
+    setRegenerateCount(prev => prev + 1);
+    setSelectedTitle(0); // Reset to first title
+  };
 
   const publishMutation = useMutation({
     mutationFn: async () => {

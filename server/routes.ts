@@ -545,34 +545,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // Generate unique titles and description using AI
-      // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+      // Using gpt-4.1 instead of gpt-5 because gpt-5 uses reasoning tokens and returns empty content
+      // gpt-4.1 is reliable, fast, and produces excellent eBay-friendly copy
       const completion = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: "gpt-4.1",
         messages: [
           {
             role: "system",
-            content: "You are an expert eBay copywriter. Create 3 DIFFERENT listing titles - each must be completely unique from the others. NEVER repeat the same words or phrasing. NEVER mention Amazon, Vine, or reviews.",
+            content: "You are an expert eBay listing copywriter specializing in creating unique, compelling product listings that maximize buyer appeal while protecting seller privacy. Output only valid JSON.",
           },
           {
             role: "user",
-            content: `Product: "${item.titleNorm}"
+            content: `Transform this product into 3 unique eBay listing titles and 1 enticing description.
 
-Create 3 COMPLETELY DIFFERENT title variations (each under 80 chars):
-1. First title: Focus on QUALITY and PREMIUM aspects (use words like: Premium, Professional, High-Quality, Luxury)
-2. Second title: Focus on FEATURES and SPECIFICATIONS (use words like: Advanced, Feature-Rich, Latest Technology)
-3. Third title: Focus on VALUE and USE CASES (use words like: Best Deal, Perfect For, Essential, Must-Have)
+Original product: "${item.titleNorm}"
 
-IMPORTANT: Each title MUST use different words and different structure. DO NOT repeat phrases.
+Create 3 DISTINCT titles (max 80 chars each):
+1. Title emphasizing QUALITY/PREMIUM (use synonyms: superior, elite, top-tier, exceptional, finest)
+2. Title emphasizing FEATURES/TECH (use synonyms: innovative, cutting-edge, versatile, multi-function)
+3. Title emphasizing BENEFITS/VALUE (use synonyms: reliable, essential, practical, affordable, trusted)
 
-Also create 1 compelling description (3-5 sentences) highlighting benefits and features.
+Each title MUST:
+- Use COMPLETELY DIFFERENT wording and structure
+- Rephrase the product type (e.g., "Floor Fan" → "Air Circulator", "Cooling Unit", "Ventilation System")
+- Include key specs in natural language (e.g., "18-inch" → "Large", "4-speed" → "Variable Speed")
+- Sound natural and buyer-focused
 
-NEVER use: vine, amazon, review, promo, free, sample, received
+Create 1 description (4-6 sentences):
+- Open with a benefit statement that solves a buyer problem
+- List 3-4 key features with emotional appeal
+- Include use cases and scenarios
+- End with a call-to-action or confidence statement
+- Make it exciting and persuasive, not just factual
 
-Return ONLY valid JSON (no markdown, no extra text):
-{"titles": ["unique title 1 about quality", "unique title 2 about features", "unique title 3 about value"], "description": "detailed product description"}`,
+STRICT RULES:
+- NEVER mention: Amazon, Vine, review, promo, free sample, received, promotional, ASIN
+- Reword everything - don't copy phrases from original
+- Sound like a professional seller, not a reviewer
+
+Output ONLY this JSON structure (no markdown, no backticks):
+{"titles": ["title 1", "title 2", "title 3"], "description": "compelling description"}`,
           },
         ],
-        max_completion_tokens: 1000,
+        max_completion_tokens: 2500,
       });
 
       console.log("Completion object:", JSON.stringify(completion, null, 2));
@@ -584,20 +599,62 @@ Return ONLY valid JSON (no markdown, no extra text):
       
       let generated;
       try {
-        generated = JSON.parse(rawContent);
+        // Clean markdown code blocks if present
+        let cleanContent = rawContent.trim();
+        if (cleanContent.startsWith('```json')) {
+          cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        } else if (cleanContent.startsWith('```')) {
+          cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        
+        generated = JSON.parse(cleanContent);
         console.log("Parsed AI Response:", JSON.stringify(generated, null, 2));
       } catch (e) {
         console.error("JSON parse error:", e);
-        // Try using gpt-5-mini as fallback
-        console.log("Falling back to simple titles...");
-        generated = {
-          titles: [
-            `Premium ${item.titleNorm}`,
-            `${item.titleNorm} - Professional Grade`,
-            `${item.titleNorm} - Best Value`
-          ],
-          description: `High-quality ${item.titleNorm}. Perfect for your needs. Ships fast!`
-        };
+        console.log("Attempting fallback with gpt-5-mini...");
+        
+        // Fallback: Try with simpler model
+        try {
+          const fallbackCompletion = await openai.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              {
+                role: "system",
+                content: "You are an eBay listing copywriter. Create unique product listings. Output only valid JSON, no markdown.",
+              },
+              {
+                role: "user",
+                content: `Rewrite this product for eBay: "${item.titleNorm}"
+
+Create 3 different titles (max 80 chars) and 1 description (4-5 sentences).
+Each title should use different words. Make it buyer-focused and appealing.
+Never mention Amazon, Vine, or review.
+
+Output only JSON:
+{"titles": ["title 1", "title 2", "title 3"], "description": "description"}`,
+              },
+            ],
+            max_completion_tokens: 1500,
+          });
+
+          const fallbackContent = fallbackCompletion.choices[0].message.content || "";
+          generated = JSON.parse(fallbackContent.trim().replace(/^```json?\s*/, '').replace(/\s*```$/, ''));
+          console.log("Fallback succeeded:", JSON.stringify(generated, null, 2));
+        } catch (fallbackError) {
+          console.error("Fallback also failed:", fallbackError);
+          // Last resort: Extract key words and create variations
+          const words = item.titleNorm.split(/\s+/).filter(w => w.length > 3);
+          const mainProduct = words.slice(0, 3).join(" ");
+          
+          generated = {
+            titles: [
+              `High-Quality ${mainProduct} - Professional Grade`,
+              `${mainProduct} - Advanced Features & Design`,
+              `Essential ${mainProduct} - Great Value Deal`
+            ],
+            description: `Upgrade your experience with this exceptional ${mainProduct}. Features premium construction and reliable performance. Perfect for home or professional use. Fast shipping and satisfaction guaranteed!`
+          };
+        }
       }
 
       // Privacy checks

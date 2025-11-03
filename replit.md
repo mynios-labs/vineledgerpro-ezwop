@@ -116,7 +116,10 @@ Preferred communication style: Simple, everyday language.
 
 **Cost Optimization:** AI is used only for text generation; all policy checks and calculations are deterministic
 
-**Model:** GPT-5 (released August 2025) via `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY`
+**Model:** GPT-4.1 via `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY`
+- **Note:** GPT-5 was initially specified but uses reasoning tokens (like o1) which resulted in empty outputs
+- GPT-4.1 is reliable, fast, and produces excellent eBay-friendly content without reasoning overhead
+- Fallback to gpt-5-mini if GPT-4.1 fails
 
 #### Database
 **Service:** Neon Serverless PostgreSQL
