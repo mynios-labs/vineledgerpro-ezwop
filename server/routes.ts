@@ -97,9 +97,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Sort by received date: "recent" (desc) or "oldest" (asc)
-      const sortOrder = sort === "oldest" ? asc : desc;
-      const items = await query.orderBy(sortOrder(vineItems.receivedDate)).limit(100);
+      // Apply sorting
+      let orderedQuery;
+      if (sort === "oldest") {
+        orderedQuery = query.orderBy(asc(vineItems.receivedDate));
+      } else if (sort === "price_high") {
+        orderedQuery = query.orderBy(desc(vineItems.etvCents));
+      } else if (sort === "price_low") {
+        orderedQuery = query.orderBy(asc(vineItems.etvCents));
+      } else {
+        // Default: "recent" - most recent first
+        orderedQuery = query.orderBy(desc(vineItems.receivedDate));
+      }
+      
+      const items = await orderedQuery.limit(100);
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

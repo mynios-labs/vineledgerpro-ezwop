@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { VineItem } from "@shared/schema";
 
 type StatusTab = "available" | "do_not_sell" | "gone";
-type SortOrder = "recent" | "oldest";
+type SortOrder = "recent" | "oldest" | "price_high" | "price_low";
 
 export default function Inventory() {
   const [, setLocation] = useLocation();
@@ -235,13 +235,15 @@ export default function Inventory() {
             />
           </div>
           <Select value={sortOrder} onValueChange={(value: SortOrder) => setSortOrder(value)}>
-            <SelectTrigger className="w-full md:w-40" data-testid="select-sort">
+            <SelectTrigger className="w-full md:w-48" data-testid="select-sort">
               <ArrowDownUp className="w-4 h-4 mr-2" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="recent" data-testid="option-recent">Recent First</SelectItem>
               <SelectItem value="oldest" data-testid="option-oldest">Oldest First</SelectItem>
+              <SelectItem value="price_high" data-testid="option-price-high">Price: High to Low</SelectItem>
+              <SelectItem value="price_low" data-testid="option-price-low">Price: Low to High</SelectItem>
             </SelectContent>
           </Select>
         </div>
