@@ -35,6 +35,8 @@ export default function DraftPage() {
   const [shippingEstimate, setShippingEstimate] = useState<{ low: number; high: number } | null>(null);
   const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
+  const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
+  const [dimensionsLoaded, setDimensionsLoaded] = useState(false);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -44,6 +46,18 @@ export default function DraftPage() {
   const { data: listing } = useQuery<Listing>({
     queryKey: [`/api/listings/${listingId}`],
     enabled: !!listingId,
+  });
+
+  const { data: inventoryItem } = useQuery<{
+    inventoryId: string;
+    vineItemId: string;
+    weightOz: number | null;
+    dimsInL: number | null;
+    dimsInW: number | null;
+    dimsInH: number | null;
+  } | null>({
+    queryKey: [`/api/inventory/by-vine-item/${vineItemId}`],
+    enabled: !!vineItemId,
   });
 
   const { data: titleSuggestions, isLoading: generatingTitles } = useQuery<{
@@ -84,6 +98,17 @@ export default function DraftPage() {
       setPrice(titleSuggestions.suggestedPrice.toFixed(2));
     }
   }, [titleSuggestions]);
+
+  // Load dimensions from inventory item if available
+  useEffect(() => {
+    if (inventoryItem && !dimensionsLoaded) {
+      if (inventoryItem.weightOz) setWeightOz(String(inventoryItem.weightOz));
+      if (inventoryItem.dimsInL) setDimsL(String(inventoryItem.dimsInL));
+      if (inventoryItem.dimsInW) setDimsW(String(inventoryItem.dimsInW));
+      if (inventoryItem.dimsInH) setDimsH(String(inventoryItem.dimsInH));
+      setDimensionsLoaded(true);
+    }
+  }, [inventoryItem, dimensionsLoaded]);
 
   // Fetch shipping estimate when dimensions are provided
   useEffect(() => {
@@ -450,10 +475,27 @@ export default function DraftPage() {
                 <CardTitle className="text-lg">Pricing & Shipping</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {inventoryItem !== undefined && (
+                  <div>
+                    {inventoryItem && (inventoryItem.weightOz || inventoryItem.dimsInL) ? (
+                      <Badge variant="outline" className="text-xs">
+                        <CheckCircle className="w-3 h-3 mr-1" />
+                        Dimensions loaded from inventory
+                      </Badge>
+                    ) : (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          <strong>Dimensions not recorded.</strong> Please enter weight and dimensions manually to calculate shipping.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="price">
-                      Price ($)
+                      Item Price ($)
                       {suggestedPrice && (
                         <Badge variant="secondary" className="ml-2 text-xs">
                           <Sparkles className="w-3 h-3 mr-1" />
@@ -519,17 +561,66 @@ export default function DraftPage() {
                   </div>
                 </div>
                 {shippingEstimate && (
-                  <Alert className="border-chart-2 bg-chart-2/10">
-                    <Sparkles className="h-4 w-4 text-chart-2" />
-                    <AlertDescription className="text-sm">
-                      Estimated shipping cost: <span className="font-semibold">
-                        ${shippingEstimate.low.toFixed(2)} - ${shippingEstimate.high.toFixed(2)}
-                      </span>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Via Shippo API • USPS Priority Mail
+                  <div className="space-y-3">
+                    <Alert className="border-chart-2 bg-chart-2/10">
+                      <Sparkles className="h-4 w-4 text-chart-2" />
+                      <AlertDescription className="text-sm">
+                        Estimated shipping cost: <span className="font-semibold">
+                          ${shippingEstimate.low.toFixed(2)} - ${shippingEstimate.high.toFixed(2)}
+                        </span>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Via Shippo API • USPS Priority Mail • Includes 5% cushion
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                    
+                    <div className="space-y-3">
+                      <Label>Shipping Pricing</Label>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setShippingMode("separate")}
+                          className={`p-3 rounded-lg border-2 text-left transition-all ${
+                            shippingMode === "separate"
+                              ? "border-primary bg-accent"
+                              : "border-border hover-elevate"
+                          }`}
+                          data-testid="button-shipping-separate"
+                        >
+                          <div className="font-medium text-sm">Charge Separately</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Buyer pays shipping
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => setShippingMode("included")}
+                          className={`p-3 rounded-lg border-2 text-left transition-all ${
+                            shippingMode === "included"
+                              ? "border-primary bg-accent"
+                              : "border-border hover-elevate"
+                          }`}
+                          data-testid="button-shipping-included"
+                        >
+                          <div className="font-medium text-sm">Include in Price</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            "Free shipping"
+                          </div>
+                        </button>
                       </div>
-                    </AlertDescription>
-                  </Alert>
+                      {shippingMode === "included" && price && (
+                        <Alert className="border-chart-1 bg-chart-1/10">
+                          <AlertDescription className="text-sm">
+                            <div className="font-medium mb-1">Suggested Total Price</div>
+                            <div className="text-lg font-bold text-chart-1">
+                              ${(parseFloat(price) + shippingEstimate.high).toFixed(2)}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Item price + estimated shipping (high end for safety)
+                            </div>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>

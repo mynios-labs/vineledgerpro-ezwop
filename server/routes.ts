@@ -744,7 +744,23 @@ Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
     }
   });
 
-  // Get shipping cost estimate using Shippo API
+  // Get inventory items by vine item ID
+  app.get("/api/inventory/by-vine-item/:vineItemId", async (req, res) => {
+    try {
+      const { vineItemId } = req.params;
+      
+      const items = await db
+        .select()
+        .from(inventoryItems)
+        .where(eq(inventoryItems.vineItemId, vineItemId));
+      
+      res.json(items[0] || null);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get shipping cost estimate using Shippo API (with 5% cushion)
   app.get("/api/shipping/estimate", async (req, res) => {
     try {
       const { weightOz, length, width, height } = req.query;
@@ -821,25 +837,27 @@ Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
       if (uspsRates.length === 0) {
         // Fallback estimate based on weight
         const baseRate = weightLb < 1 ? 4.50 : weightLb < 3 ? 8.00 : weightLb < 5 ? 10.50 : 15.00;
+        // Apply 5% cushion to fallback estimates
         return res.json({
-          low: Math.round(baseRate * 100) / 100,
-          high: Math.round((baseRate * 1.5) * 100) / 100,
+          low: Math.round(baseRate * 1.05 * 100) / 100,
+          high: Math.round((baseRate * 1.5) * 1.05 * 100) / 100,
         });
       }
 
       const low = Math.min(...uspsRates);
       const high = Math.max(...uspsRates);
 
+      // Apply 5% cushion to account for estimate inaccuracy
       res.json({
-        low: Math.round(low * 100) / 100,
-        high: Math.round(high * 100) / 100,
+        low: Math.round(low * 1.05 * 100) / 100,
+        high: Math.round(high * 1.05 * 100) / 100,
       });
     } catch (error: any) {
       console.error("Shipping estimate error:", error);
-      // Fallback estimate
+      // Fallback estimate with 5% cushion
       res.json({
-        low: 5.50,
-        high: 12.00,
+        low: Math.round(5.50 * 1.05 * 100) / 100,
+        high: Math.round(12.00 * 1.05 * 100) / 100,
       });
     }
   });
