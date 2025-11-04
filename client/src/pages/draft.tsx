@@ -33,6 +33,8 @@ export default function DraftPage() {
   const [dimsH, setDimsH] = useState("");
   const [regenerateCount, setRegenerateCount] = useState(0);
   const [shippingEstimate, setShippingEstimate] = useState<{ low: number; high: number } | null>(null);
+  const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
+  const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -286,8 +288,10 @@ export default function DraftPage() {
                         : "border-border"
                     }`}
                     data-testid={`option-title-${index}`}
+                    onMouseEnter={() => setHoveredTitleIndex(index)}
+                    onMouseLeave={() => setHoveredTitleIndex(null)}
                   >
-                    <div className="flex items-start gap-2 mb-2">
+                    <div className="flex items-start gap-2">
                       <div 
                         className={`mt-1 w-4 h-4 rounded-full border-2 flex-shrink-0 cursor-pointer ${
                           selectedTitle === index ? "bg-primary border-primary" : "border-muted-foreground"
@@ -300,13 +304,39 @@ export default function DraftPage() {
                             Original Amazon Title
                           </Badge>
                         )}
-                        <Input
-                          value={title}
-                          onChange={(e) => handleTitleEdit(index, e.target.value)}
-                          className="text-sm"
-                          placeholder="Enter title..."
-                          data-testid={`input-title-${index}`}
-                        />
+                        {editingTitleIndex === index ? (
+                          <Input
+                            value={title}
+                            onChange={(e) => handleTitleEdit(index, e.target.value)}
+                            onBlur={() => setEditingTitleIndex(null)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                setEditingTitleIndex(null);
+                              }
+                            }}
+                            autoFocus
+                            className="text-sm"
+                            placeholder="Enter title..."
+                            data-testid={`input-title-${index}`}
+                          />
+                        ) : (
+                          <div className="flex items-start gap-2 group">
+                            <p className="text-sm flex-1 leading-relaxed" data-testid={`text-title-${index}`}>
+                              {title}
+                            </p>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={`h-6 w-6 flex-shrink-0 transition-opacity ${
+                                hoveredTitleIndex === index ? 'opacity-100' : 'opacity-0'
+                              }`}
+                              onClick={() => setEditingTitleIndex(index)}
+                              data-testid={`button-edit-title-${index}`}
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
