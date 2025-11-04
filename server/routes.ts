@@ -687,6 +687,49 @@ Output only JSON:
       // Similarity check
       const similarityScore = calculateSimilarity(item.titleNorm, generated.titles?.[0] || "");
 
+      // AI-powered price suggestion
+      let suggestedPrice: number | undefined;
+      try {
+        const priceCompletion = await openai.chat.completions.create({
+          model: "gpt-4.1-mini",
+          messages: [
+            {
+              role: "system",
+              content: "You are a pricing expert for reselling products on eBay. Suggest competitive prices based on product details. Output only a number.",
+            },
+            {
+              role: "user",
+              content: `Suggest a competitive eBay listing price for this item:
+Product: "${item.titleNorm}"
+Category: ${suggestedCategory.category.categoryName}
+Original Value (ETV): $${(item.etvCents / 100).toFixed(2)}
+
+Consider:
+- Used/like-new condition (from Amazon Vine program)
+- Typical eBay resale margins (30-50% of retail)
+- Market demand for this category
+- Competitive pricing to sell quickly
+
+Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
+            },
+          ],
+          max_completion_tokens: 50,
+        });
+
+        const priceText = priceCompletion.choices[0].message.content?.trim() || "";
+        const parsedPrice = parseFloat(priceText);
+        if (!isNaN(parsedPrice) && parsedPrice > 0) {
+          suggestedPrice = parsedPrice;
+        } else {
+          // Fallback: 40% of ETV as a reasonable resale price
+          suggestedPrice = Math.round((item.etvCents / 100) * 0.4 * 100) / 100;
+        }
+      } catch (error) {
+        console.error("Price suggestion failed, using fallback:", error);
+        // Fallback: 40% of ETV
+        suggestedPrice = Math.round((item.etvCents / 100) * 0.4 * 100) / 100;
+      }
+
       res.json({
         titles: generated.titles || [item.titleNorm, item.titleNorm, item.titleNorm],
         description: generated.description || item.titleNorm,
@@ -694,9 +737,110 @@ Output only JSON:
         categoryName: suggestedCategory.category.categoryName,
         privacyWarnings,
         similarityScore,
+        suggestedPrice,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get shipping cost estimate using Shippo API
+  app.get("/api/shipping/estimate", async (req, res) => {
+    try {
+      const { weightOz, length, width, height } = req.query;
+
+      if (!weightOz || !length || !width || !height) {
+        return res.status(400).json({ error: "Missing required parameters" });
+      }
+
+      const shippoApiKey = process.env.SHIPPO_API_KEY;
+      if (!shippoApiKey) {
+        return res.status(500).json({ error: "Shippo API key not configured" });
+      }
+
+      // Convert to numbers
+      const weightLb = parseFloat(weightOz as string) / 16;
+      const lengthIn = parseFloat(length as string);
+      const widthIn = parseFloat(width as string);
+      const heightIn = parseFloat(height as string);
+
+      // Create a shipment to get rate estimates
+      const shipmentResponse = await fetch("https://api.goshippo.com/shipments/", {
+        method: "POST",
+        headers: {
+          "Authorization": `ShippoToken ${shippoApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          address_from: {
+            name: "Seller",
+            street1: "123 Main St",
+            city: "San Francisco",
+            state: "CA",
+            zip: "94105",
+            country: "US",
+          },
+          address_to: {
+            name: "Buyer",
+            street1: "456 Market St",
+            city: "Los Angeles",
+            state: "CA",
+            zip: "90001",
+            country: "US",
+          },
+          parcels: [{
+            length: String(lengthIn),
+            width: String(widthIn),
+            height: String(heightIn),
+            distance_unit: "in",
+            weight: String(weightLb),
+            mass_unit: "lb",
+          }],
+          async: false,
+        }),
+      });
+
+      if (!shipmentResponse.ok) {
+        const errorText = await shipmentResponse.text();
+        console.error("Shippo API error:", errorText);
+        return res.status(500).json({ error: "Failed to get shipping rates" });
+      }
+
+      const shipmentData = await shipmentResponse.json();
+
+      // Extract USPS Priority Mail rates
+      const rates = shipmentData.rates || [];
+      const uspsRates = rates
+        .filter((rate: any) => 
+          rate.provider === "USPS" && 
+          (rate.servicelevel?.name?.includes("Priority") || rate.servicelevel?.name?.includes("First"))
+        )
+        .map((rate: any) => parseFloat(rate.amount))
+        .filter((amount: number) => !isNaN(amount) && amount > 0);
+
+      if (uspsRates.length === 0) {
+        // Fallback estimate based on weight
+        const baseRate = weightLb < 1 ? 4.50 : weightLb < 3 ? 8.00 : weightLb < 5 ? 10.50 : 15.00;
+        return res.json({
+          low: Math.round(baseRate * 100) / 100,
+          high: Math.round((baseRate * 1.5) * 100) / 100,
+        });
+      }
+
+      const low = Math.min(...uspsRates);
+      const high = Math.max(...uspsRates);
+
+      res.json({
+        low: Math.round(low * 100) / 100,
+        high: Math.round(high * 100) / 100,
+      });
+    } catch (error: any) {
+      console.error("Shipping estimate error:", error);
+      // Fallback estimate
+      res.json({
+        low: 5.50,
+        high: 12.00,
+      });
     }
   });
 

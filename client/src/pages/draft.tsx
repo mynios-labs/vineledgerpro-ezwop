@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ArrowLeft, Upload, X, AlertTriangle, CheckCircle, Sparkles, RefreshCw } from "lucide-react";
+import { ArrowLeft, Upload, X, AlertTriangle, CheckCircle, Sparkles, RefreshCw, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,12 +24,15 @@ export default function DraftPage() {
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [selectedTitle, setSelectedTitle] = useState<number>(0);
+  const [editableTitles, setEditableTitles] = useState<string[]>([]);
   const [price, setPrice] = useState("");
+  const [suggestedPrice, setSuggestedPrice] = useState("");
   const [weightOz, setWeightOz] = useState("");
   const [dimsL, setDimsL] = useState("");
   const [dimsW, setDimsW] = useState("");
   const [dimsH, setDimsH] = useState("");
   const [regenerateCount, setRegenerateCount] = useState(0);
+  const [shippingEstimate, setShippingEstimate] = useState<{ low: number; high: number } | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -48,27 +51,92 @@ export default function DraftPage() {
     categoryName: string;
     privacyWarnings: string[];
     similarityScore: number;
+    suggestedPrice?: number;
   }>({
     queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}&_refresh=${regenerateCount}`],
     enabled: !!vineItemId,
     staleTime: 0,
   });
 
+  // Initialize editable titles when suggestions load (only once or on regenerate)
+  useEffect(() => {
+    if (titleSuggestions && vineItem && editableTitles.length === 0) {
+      // Include original title + AI-generated titles
+      const allTitles = [vineItem.titleNorm, ...titleSuggestions.titles];
+      setEditableTitles(allTitles);
+    }
+  }, [titleSuggestions, vineItem]);
+
+  // Re-initialize titles when regenerating (regenerateCount changes)
+  useEffect(() => {
+    if (regenerateCount > 0 && titleSuggestions && vineItem) {
+      const allTitles = [vineItem.titleNorm, ...titleSuggestions.titles];
+      setEditableTitles(allTitles);
+    }
+  }, [regenerateCount]);
+
+  // Set suggested price when available
+  useEffect(() => {
+    if (titleSuggestions?.suggestedPrice && !price) {
+      setSuggestedPrice(titleSuggestions.suggestedPrice.toFixed(2));
+      setPrice(titleSuggestions.suggestedPrice.toFixed(2));
+    }
+  }, [titleSuggestions]);
+
+  // Fetch shipping estimate when dimensions are provided
+  useEffect(() => {
+    const fetchShippingEstimate = async () => {
+      if (weightOz && dimsL && dimsW && dimsH) {
+        try {
+          const response = await fetch(
+            `/api/shipping/estimate?weightOz=${weightOz}&length=${dimsL}&width=${dimsW}&height=${dimsH}`
+          );
+          if (response.ok) {
+            const data = await response.json();
+            if (data.low && data.high) {
+              setShippingEstimate(data);
+            } else {
+              // Fallback if API response is malformed
+              setShippingEstimate(null);
+            }
+          } else {
+            setShippingEstimate(null);
+          }
+        } catch (error) {
+          console.error("Failed to fetch shipping estimate:", error);
+          setShippingEstimate(null);
+        }
+      } else {
+        setShippingEstimate(null);
+      }
+    };
+
+    const timeoutId = setTimeout(fetchShippingEstimate, 500);
+    return () => clearTimeout(timeoutId);
+  }, [weightOz, dimsL, dimsW, dimsH]);
+
   const regenerateTitles = () => {
+    setEditableTitles([]); // Clear editable titles so they refresh
     setRegenerateCount(prev => prev + 1);
     setSelectedTitle(0); // Reset to first title
   };
 
+  const handleTitleEdit = (index: number, newTitle: string) => {
+    const updated = [...editableTitles];
+    updated[index] = newTitle;
+    setEditableTitles(updated);
+  };
+
   const publishMutation = useMutation({
     mutationFn: async () => {
-      if (!titleSuggestions || selectedPhotos.length < 2) {
+      if (!titleSuggestions || selectedPhotos.length < 2 || editableTitles.length === 0) {
         throw new Error("Please add at least 2 photos");
       }
 
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
-      formData.append("title", titleSuggestions.titles[selectedTitle]);
+      formData.append("title", editableTitles[selectedTitle]);
       formData.append("description", titleSuggestions.description);
       formData.append("categoryId", titleSuggestions.categoryId);
       formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
@@ -196,7 +264,7 @@ export default function DraftPage() {
               <CardHeader className="flex flex-row items-center justify-between gap-2">
                 <div>
                   <CardTitle className="text-lg">Title Options</CardTitle>
-                  <CardDescription>Select a unique title for your listing</CardDescription>
+                  <CardDescription>Select and customize your listing title</CardDescription>
                 </div>
                 <Button
                   variant="ghost"
@@ -209,25 +277,46 @@ export default function DraftPage() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
-                {titleSuggestions?.titles.map((title, index) => (
+                {editableTitles.map((title, index) => (
                   <div
                     key={index}
-                    className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                    className={`p-3 rounded-lg border-2 transition-all ${
                       selectedTitle === index
                         ? "border-primary bg-accent"
-                        : "border-border hover-elevate"
+                        : "border-border"
                     }`}
-                    onClick={() => setSelectedTitle(index)}
                     data-testid={`option-title-${index}`}
                   >
-                    <div className="flex items-start gap-2">
-                      <div className={`mt-1 w-4 h-4 rounded-full border-2 flex-shrink-0 ${
-                        selectedTitle === index ? "bg-primary border-primary" : "border-muted-foreground"
-                      }`} />
-                      <span className="text-sm flex-1">{title}</span>
+                    <div className="flex items-start gap-2 mb-2">
+                      <div 
+                        className={`mt-1 w-4 h-4 rounded-full border-2 flex-shrink-0 cursor-pointer ${
+                          selectedTitle === index ? "bg-primary border-primary" : "border-muted-foreground"
+                        }`}
+                        onClick={() => setSelectedTitle(index)}
+                      />
+                      <div className="flex-1 space-y-2">
+                        {index === 0 && (
+                          <Badge variant="outline" className="text-xs mb-1">
+                            Original Amazon Title
+                          </Badge>
+                        )}
+                        <Input
+                          value={title}
+                          onChange={(e) => handleTitleEdit(index, e.target.value)}
+                          className="text-sm"
+                          placeholder="Enter title..."
+                          data-testid={`input-title-${index}`}
+                        />
+                      </div>
                     </div>
                   </div>
                 ))}
+                {generatingTitles && (
+                  <div className="text-center py-4 text-sm text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
+                    Generating unique titles...
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -333,7 +422,15 @@ export default function DraftPage() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Price ($)</Label>
+                    <Label htmlFor="price">
+                      Price ($)
+                      {suggestedPrice && (
+                        <Badge variant="secondary" className="ml-2 text-xs">
+                          <Sparkles className="w-3 h-3 mr-1" />
+                          AI Suggested
+                        </Badge>
+                      )}
+                    </Label>
                     <Input
                       id="price"
                       type="number"
@@ -391,11 +488,16 @@ export default function DraftPage() {
                     />
                   </div>
                 </div>
-                {weightOz && dimsL && dimsW && dimsH && (
+                {shippingEstimate && (
                   <Alert className="border-chart-2 bg-chart-2/10">
                     <Sparkles className="h-4 w-4 text-chart-2" />
                     <AlertDescription className="text-sm">
-                      Estimated shipping: <span className="font-semibold">$5.50 - $12.00</span>
+                      Estimated shipping cost: <span className="font-semibold">
+                        ${shippingEstimate.low.toFixed(2)} - ${shippingEstimate.high.toFixed(2)}
+                      </span>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Via Shippo API • USPS Priority Mail
+                      </div>
                     </AlertDescription>
                   </Alert>
                 )}
@@ -416,11 +518,11 @@ export default function DraftPage() {
                     <img src={photoUrls[0]} alt="Product" className="w-full h-full object-cover" />
                   </div>
                 )}
-                {titleSuggestions && (
+                {titleSuggestions && editableTitles.length > 0 && (
                   <>
                     <div>
                       <h3 className="font-semibold text-lg mb-2" data-testid="text-preview-title">
-                        {titleSuggestions.titles[selectedTitle]}
+                        {editableTitles[selectedTitle]}
                       </h3>
                       {price && (
                         <div className="text-2xl font-bold text-chart-1" data-testid="text-preview-price">
