@@ -687,49 +687,6 @@ Output only JSON:
       // Similarity check
       const similarityScore = calculateSimilarity(item.titleNorm, generated.titles?.[0] || "");
 
-      // AI-powered price suggestion
-      let suggestedPrice: number | undefined;
-      try {
-        const priceCompletion = await openai.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [
-            {
-              role: "system",
-              content: "You are a pricing expert for reselling products on eBay. Suggest competitive prices based on product details. Output only a number.",
-            },
-            {
-              role: "user",
-              content: `Suggest a competitive eBay listing price for this item:
-Product: "${item.titleNorm}"
-Category: ${suggestedCategory.category.categoryName}
-Original Value (ETV): $${(item.etvCents / 100).toFixed(2)}
-
-Consider:
-- Used/like-new condition (from Amazon Vine program)
-- Typical eBay resale margins (30-50% of retail)
-- Market demand for this category
-- Competitive pricing to sell quickly
-
-Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
-            },
-          ],
-          max_completion_tokens: 50,
-        });
-
-        const priceText = priceCompletion.choices[0].message.content?.trim() || "";
-        const parsedPrice = parseFloat(priceText);
-        if (!isNaN(parsedPrice) && parsedPrice > 0) {
-          suggestedPrice = parsedPrice;
-        } else {
-          // Fallback: 40% of ETV as a reasonable resale price
-          suggestedPrice = Math.round((item.etvCents / 100) * 0.4 * 100) / 100;
-        }
-      } catch (error) {
-        console.error("Price suggestion failed, using fallback:", error);
-        // Fallback: 40% of ETV
-        suggestedPrice = Math.round((item.etvCents / 100) * 0.4 * 100) / 100;
-      }
-
       res.json({
         titles: generated.titles || [item.titleNorm, item.titleNorm, item.titleNorm],
         description: generated.description || item.titleNorm,
@@ -737,7 +694,6 @@ Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
         categoryName: suggestedCategory.category.categoryName,
         privacyWarnings,
         similarityScore,
-        suggestedPrice,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -824,19 +780,16 @@ Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
 
       const shipmentData = await shipmentResponse.json();
 
-      // Extract USPS Priority Mail rates
+      // Extract UPS rates
       const rates = shipmentData.rates || [];
-      const uspsRates = rates
-        .filter((rate: any) => 
-          rate.provider === "USPS" && 
-          (rate.servicelevel?.name?.includes("Priority") || rate.servicelevel?.name?.includes("First"))
-        )
+      const upsRates = rates
+        .filter((rate: any) => rate.provider === "UPS")
         .map((rate: any) => parseFloat(rate.amount))
         .filter((amount: number) => !isNaN(amount) && amount > 0);
 
-      if (uspsRates.length === 0) {
+      if (upsRates.length === 0) {
         // Fallback estimate based on weight
-        const baseRate = weightLb < 1 ? 4.50 : weightLb < 3 ? 8.00 : weightLb < 5 ? 10.50 : 15.00;
+        const baseRate = weightLb < 1 ? 5.00 : weightLb < 3 ? 9.00 : weightLb < 5 ? 12.00 : 16.00;
         // Apply 5% cushion to fallback estimates
         return res.json({
           low: Math.round(baseRate * 1.05 * 100) / 100,
@@ -844,8 +797,8 @@ Output ONLY a number (e.g., 29.99) with no dollar sign, no explanation.`,
         });
       }
 
-      const low = Math.min(...uspsRates);
-      const high = Math.max(...uspsRates);
+      const low = Math.min(...upsRates);
+      const high = Math.max(...upsRates);
 
       // Apply 5% cushion to account for estimate inaccuracy
       res.json({

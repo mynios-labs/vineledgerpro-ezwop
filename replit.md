@@ -32,11 +32,17 @@ Preferred communication style: Simple, everyday language.
 
 **Key Pages:**
 - Inventory page with typeahead search for product selection
-- Draft listing creation with AI-powered content generation
+- Draft listing creation with AI-powered content generation (accessible only from inventory page, not in navigation)
 - Orders page with shipping label purchase
 - Messages & Returns for customer communication
 - Money & Ledger for accounting with CSV/PDF exports
 - Health dashboard for monitoring policy compliance
+
+**Draft Listing Workflow:**
+- No AI price suggestions - user sets prices manually based on market research
+- No auto-loaded dimensions - user measures and enters weight/dimensions manually
+- UPS shipping estimates with 5% cushion included
+- Choice between charging shipping separately or including in item price
 
 ### Backend Architecture
 
@@ -62,6 +68,12 @@ Preferred communication style: Simple, everyday language.
 2. **Inventory & Listings:** `inventory_items`, `listings`, `photo_sets` - Manages physical inventory and eBay listing lifecycle
 3. **Order Fulfillment:** `orders`, `buyers` - Tracks sales and customer information
 4. **Financial Tracking:** `accounting_ledger` - Double-entry bookkeeping with event types for basis, sales, fees, shipping, payouts
+   - **Event Types:** `basis_add`, `sale`, `fee`, `shipping_label`, `label_refund`, `return`, `writeoff`, `payout`, `promotion_fee`, `sales_tax_collected_by_marketplace`
+   - **eBay Fee Tracking:** Orders table includes `ebayFeesCents` field; ledger designed to record "fee" and "promotion_fee" entries
+   - **Shippo Charge Tracking:** Ledger designed to record "shipping_label" entries for label purchases and "label_refund" for refunds
+   - **Post-Shipping Adjustments:** Schema supports tracking weight correction charges via additional "shipping_label" entries
+   - **Implementation Status:** Schema complete; ledger entry creation for fees/shipping needs to be added during order sync and label purchase workflows
+   - **Tax Compliance:** CSV export includes all ledger entries with defective item flags for CPA review
 5. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
 6. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
 
@@ -89,7 +101,7 @@ Preferred communication style: Simple, everyday language.
 #### eBay APIs
 - **Taxonomy API:** Category suggestions for product classification
 - **Inventory API:** SKU and inventory item management
-- **Offer API:** Listing creation and price management
+- **Offer API:** Listing creation and price management (Buy It Now format only)
 - **Fulfillment API:** Order retrieval and tracking upload
 - **Post Order API:** Return case handling
 - **Messaging API:** Buyer communication
@@ -99,12 +111,25 @@ Preferred communication style: Simple, everyday language.
 
 **Environment Toggle:** `EBAY_ENV` switches between sandbox and production endpoints
 
+**Listing Requirements:**
+- All listings are Buy It Now format (no auctions)
+- Handling time set to 1-2 days in eBay store settings (buffer before shipping)
+- This handling time is separate from carrier transit time
+
 #### Shipping Services
 **Primary Integration:** Shippo API (alternative: EasyPost)
+
+**Carrier:** UPS exclusively for all shipments
 
 **Functionality:** Rate calculation, label purchase, tracking number generation
 
 **Configuration:** `SHIPPO_API_KEY` environment variable
+
+**Pricing Strategy:**
+- All shipping estimates include a 5% cushion for accuracy buffer
+- Cushion is baked into displayed rates but not explicitly shown to eBay buyers
+- Two pricing modes: "Charge Separately" (buyer pays shipping) or "Include in Price" (free shipping)
+- When including shipping in price, system suggests total = item price + high-end shipping estimate
 
 #### AI Services
 **Provider:** OpenAI-compatible API via Replit AI Integrations
@@ -113,6 +138,10 @@ Preferred communication style: Simple, everyday language.
 - Title rewriting (3 variations per listing)
 - Description generation
 - Message triage and reply drafting
+
+**NOT Used For:**
+- Pricing suggestions (removed - user sets all prices manually)
+- Dimension estimates (removed - user measures and enters manually)
 
 **Cost Optimization:** AI is used only for text generation; all policy checks and calculations are deterministic
 

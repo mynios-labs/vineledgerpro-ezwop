@@ -26,7 +26,6 @@ export default function DraftPage() {
   const [selectedTitle, setSelectedTitle] = useState<number>(0);
   const [editableTitles, setEditableTitles] = useState<string[]>([]);
   const [price, setPrice] = useState("");
-  const [suggestedPrice, setSuggestedPrice] = useState("");
   const [weightOz, setWeightOz] = useState("");
   const [dimsL, setDimsL] = useState("");
   const [dimsW, setDimsW] = useState("");
@@ -36,7 +35,6 @@ export default function DraftPage() {
   const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
-  const [dimensionsLoaded, setDimensionsLoaded] = useState(false);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -48,18 +46,6 @@ export default function DraftPage() {
     enabled: !!listingId,
   });
 
-  const { data: inventoryItem } = useQuery<{
-    inventoryId: string;
-    vineItemId: string;
-    weightOz: number | null;
-    dimsInL: number | null;
-    dimsInW: number | null;
-    dimsInH: number | null;
-  } | null>({
-    queryKey: [`/api/inventory/by-vine-item/${vineItemId}`],
-    enabled: !!vineItemId,
-  });
-
   const { data: titleSuggestions, isLoading: generatingTitles } = useQuery<{
     titles: string[];
     description: string;
@@ -67,7 +53,6 @@ export default function DraftPage() {
     categoryName: string;
     privacyWarnings: string[];
     similarityScore: number;
-    suggestedPrice?: number;
   }>({
     queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}&_refresh=${regenerateCount}`],
     enabled: !!vineItemId,
@@ -90,25 +75,6 @@ export default function DraftPage() {
       setEditableTitles(allTitles);
     }
   }, [regenerateCount]);
-
-  // Set suggested price when available
-  useEffect(() => {
-    if (titleSuggestions?.suggestedPrice && !price) {
-      setSuggestedPrice(titleSuggestions.suggestedPrice.toFixed(2));
-      setPrice(titleSuggestions.suggestedPrice.toFixed(2));
-    }
-  }, [titleSuggestions]);
-
-  // Load dimensions from inventory item if available
-  useEffect(() => {
-    if (inventoryItem && !dimensionsLoaded) {
-      if (inventoryItem.weightOz) setWeightOz(String(inventoryItem.weightOz));
-      if (inventoryItem.dimsInL) setDimsL(String(inventoryItem.dimsInL));
-      if (inventoryItem.dimsInW) setDimsW(String(inventoryItem.dimsInW));
-      if (inventoryItem.dimsInH) setDimsH(String(inventoryItem.dimsInH));
-      setDimensionsLoaded(true);
-    }
-  }, [inventoryItem, dimensionsLoaded]);
 
   // Fetch shipping estimate when dimensions are provided
   useEffect(() => {
@@ -475,34 +441,15 @@ export default function DraftPage() {
                 <CardTitle className="text-lg">Pricing & Shipping</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {inventoryItem !== undefined && (
-                  <div>
-                    {inventoryItem && (inventoryItem.weightOz || inventoryItem.dimsInL) ? (
-                      <Badge variant="outline" className="text-xs">
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Dimensions loaded from inventory
-                      </Badge>
-                    ) : (
-                      <Alert variant="destructive">
-                        <AlertTriangle className="h-4 w-4" />
-                        <AlertDescription className="text-sm">
-                          <strong>Dimensions not recorded.</strong> Please enter weight and dimensions manually to calculate shipping.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-                )}
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription className="text-sm">
+                    <strong>Dimensions not recorded.</strong> Please enter weight and dimensions manually to calculate shipping.
+                  </AlertDescription>
+                </Alert>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">
-                      Item Price ($)
-                      {suggestedPrice && (
-                        <Badge variant="secondary" className="ml-2 text-xs">
-                          <Sparkles className="w-3 h-3 mr-1" />
-                          AI Suggested
-                        </Badge>
-                      )}
-                    </Label>
+                    <Label htmlFor="price">Item Price ($)</Label>
                     <Input
                       id="price"
                       type="number"
@@ -569,7 +516,7 @@ export default function DraftPage() {
                           ${shippingEstimate.low.toFixed(2)} - ${shippingEstimate.high.toFixed(2)}
                         </span>
                         <div className="text-xs text-muted-foreground mt-1">
-                          Via Shippo API • USPS Priority Mail • Includes 5% cushion
+                          Via Shippo API • UPS • Includes 5% cushion
                         </div>
                       </AlertDescription>
                     </Alert>

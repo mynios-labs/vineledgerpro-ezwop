@@ -9,11 +9,6 @@ const menuItems = [
     icon: Home,
   },
   {
-    title: "Draft Listing",
-    url: "/draft",
-    icon: Package,
-  },
-  {
     title: "Orders",
     url: "/orders",
     icon: ShoppingCart,
