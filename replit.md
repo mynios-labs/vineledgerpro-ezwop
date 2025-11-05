@@ -116,6 +116,8 @@ Preferred communication style: Simple, everyday language.
 - All listings are Buy It Now format (no auctions)
 - Handling time set to 1-2 days in eBay store settings (buffer before shipping)
 - This handling time is separate from carrier transit time
+- Business policies (fulfillment, payment, return) use eBay account defaults
+- Custom business policies can be configured in eBay Seller Hub and stored in business_policies table for future use
 
 #### Shipping Services
 **Primary Integration:** Shippo API (alternative: EasyPost)
@@ -127,10 +129,10 @@ Preferred communication style: Simple, everyday language.
 **Configuration:** `SHIPPO_API_KEY` environment variable
 
 **Pricing Strategy:**
-- All shipping estimates include a 5% cushion for accuracy buffer
-- Cushion is baked into displayed rates but not explicitly shown to eBay buyers
+- Shipping estimates use UPS Ground rate only (cheapest option) plus 5% cushion for accuracy buffer
+- Cushion is baked into displayed rate but not explicitly shown to eBay buyers
 - Two pricing modes: "Charge Separately" (buyer pays shipping) or "Include in Price" (free shipping)
-- When including shipping in price, system suggests total = item price + high-end shipping estimate
+- When including shipping in price, system suggests total = item price + shipping estimate with cushion
 
 #### AI Services
 **Provider:** OpenAI-compatible API via Replit AI Integrations
