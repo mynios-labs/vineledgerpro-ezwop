@@ -1585,34 +1585,11 @@ Output only JSON:
     try {
       // Get all inventory items with their related data
       const items = await db
-        .select({
-          inventoryId: inventoryItems.inventoryId,
-          vineItemId: vineItems.vineItemId,
-          title: vineItems.titleNorm,
-          asin: vineItems.asin,
-          etvCents: vineItems.etvCents,
-          receivedDate: vineItems.receivedDate,
-          defective: vineItems.defective,
-          defectiveNotes: vineItems.defectiveNotes,
-          status: vineItems.status,
-          listingId: listings.listingId,
-          publishedAt: listings.publishedAt,
-          priceCents: listings.priceCents,
-          orderId: orders.orderId,
-          orderDate: orders.orderDate,
-          shipBy: orders.shipBy,
-          saleGrossCents: orders.saleGrossCents,
-          shippingCollectedCents: orders.shippingCollectedCents,
-          ebayFeesCents: orders.ebayFeesCents,
-          orderStatus: orders.status,
-          tracking: orders.tracking,
-          shippedAt: orders.shippedAt,
-        })
+        .select()
         .from(inventoryItems)
-        .leftJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+        .innerJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
         .leftJoin(listings, eq(inventoryItems.inventoryId, listings.inventoryId))
-        .leftJoin(orders, eq(listings.listingId, orders.listingId))
-        .orderBy(desc(vineItems.receivedDate));
+        .leftJoin(orders, eq(listings.listingId, orders.listingId));
 
       // Get all ledger entries to calculate totals per item
       const allLedger = await db
@@ -1620,10 +1597,10 @@ Output only JSON:
         .from(accountingLedger);
 
       // Build item-centric view
-      const itemView = items.map((item) => {
+      const itemView = items.map((row) => {
         // Get all ledger entries for this inventory item
         const itemLedger = allLedger.filter(
-          (entry) => entry.inventoryId === item.inventoryId
+          (entry) => entry.inventoryId === row.inventory_items.inventoryId
         );
 
         let basisCents = 0;
@@ -1657,30 +1634,31 @@ Output only JSON:
         const netProfit = saleCents - basisCents - feesCents - netShippingCosts;
 
         return {
-          inventoryId: item.inventoryId,
-          title: item.title,
-          asin: item.asin,
-          status: item.status,
-          receivedDate: item.receivedDate,
-          publishedAt: item.publishedAt,
-          orderDate: item.orderDate,
-          shippedAt: item.shippedAt,
-          orderStatus: item.orderStatus,
+          inventoryId: row.inventory_items.inventoryId,
+          title: row.vine_items.titleNorm,
+          asin: row.vine_items.asin,
+          status: row.vine_items.status,
+          receivedDate: row.vine_items.receivedDate,
+          publishedAt: row.listings?.publishedAt || null,
+          orderDate: row.orders?.orderDate || null,
+          shippedAt: row.orders?.shippedAt || null,
+          orderStatus: row.orders?.status || null,
           basisCents,
-          listPriceCents: item.priceCents || 0,
+          listPriceCents: row.listings?.priceCents || 0,
           saleCents,
           feesCents,
           shippingCostsCents: netShippingCosts,
           netProfitCents: netProfit,
-          defective: item.defective,
-          defectiveNotes: item.defectiveNotes,
-          tracking: item.tracking,
-          orderId: item.orderId,
+          defective: row.vine_items.defective,
+          defectiveNotes: row.vine_items.defectiveNotes,
+          tracking: row.orders?.tracking || null,
+          orderId: row.orders?.orderId || null,
         };
       });
 
       res.json(itemView);
     } catch (error: any) {
+      console.error("Error in /api/accounting/items:", error);
       res.status(500).json({ error: error.message });
     }
   });
