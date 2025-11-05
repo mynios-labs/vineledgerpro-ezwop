@@ -17,6 +17,7 @@ import OrdersPage from "@/pages/orders";
 import MessagesPage from "@/pages/messages";
 import MoneyPage from "@/pages/money";
 import HealthPage from "@/pages/health";
+import TaxReport from "@/pages/tax-report";
 
 function Router() {
   return (
@@ -30,6 +31,7 @@ function Router() {
       <Route path="/orders" component={OrdersPage} />
       <Route path="/messages" component={MessagesPage} />
       <Route path="/money" component={MoneyPage} />
+      <Route path="/tax-report" component={TaxReport} />
       <Route path="/health" component={HealthPage} />
       <Route component={NotFound} />
     </Switch>
