@@ -187,14 +187,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update item status (available, do_not_sell, gone)
+  // Update item status (available, do_not_sell, gone, personal_use)
   app.patch("/api/vine-items/:id/status", async (req, res) => {
     try {
       const { id } = req.params;
       const { status } = req.body;
 
       // Validate status
-      const validStatuses = ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone"];
+      const validStatuses = ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone", "personal_use"];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
