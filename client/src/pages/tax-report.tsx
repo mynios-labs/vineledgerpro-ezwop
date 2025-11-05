@@ -209,7 +209,7 @@ export default function TaxReport() {
                 <span className="font-medium">
                   {formatCurrency(currentYearData.salesTaxCollectedCents)}
                 </span>
-                <Info className="inline-block w-3 h-3 ml-1 text-muted-foreground" title="Not taxable income - collected by eBay and remitted to states" />
+                <Info className="inline-block w-3 h-3 ml-1 text-muted-foreground" />
               </div>
             </div>
           </CardContent>

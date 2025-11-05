@@ -2169,7 +2169,7 @@ Output only JSON:
       }
 
       // Calculate net taxable income for each year
-      for (const yearData of yearMap.values()) {
+      for (const yearData of Array.from(yearMap.values())) {
         yearData.netTaxableIncomeCents =
           yearData.grossSalesCents -
           yearData.basisCents -
@@ -2190,7 +2190,8 @@ Output only JSON:
       const crossYearItems: CrossYearItem[] = [];
 
       for (const item of allData) {
-        if (item.orderDate && item.receivedDate) {
+        // Only include items that have complete sale data (skip pending/incomplete orders)
+        if (item.orderDate && item.receivedDate && item.saleGrossCents !== null && item.saleGrossCents > 0) {
           const receivedYear = new Date(item.receivedDate).getFullYear();
           const soldYear = new Date(item.orderDate).getFullYear();
 
