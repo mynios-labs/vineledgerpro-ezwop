@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
-import { eq, desc, asc, and, or, like, ilike, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, ilike, inArray, sql } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
@@ -46,15 +46,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(vineItems)
         .groupBy(vineItems.status);
 
+      const reservedCount = result.find((r) => r.status === "reserved")?.count || 0;
+      const soldCount = result.find((r) => r.status === "sold")?.count || 0;
+      const returnedCount = result.find((r) => r.status === "returned")?.count || 0;
+      const goneCount = result.find((r) => r.status === "gone")?.count || 0;
+
       const stats = {
         total: result.reduce((sum, row) => sum + row.count, 0),
         available: result.find((r) => r.status === "available")?.count || 0,
-        reserved: result.find((r) => r.status === "reserved")?.count || 0,
-        sold: result.find((r) => r.status === "sold")?.count || 0,
+        reserved: reservedCount,
+        sold: soldCount,
         do_not_sell: result.find((r) => r.status === "do_not_sell")?.count || 0,
-        gone: result.find((r) => r.status === "gone")?.count || 0,
-        returned: result.find((r) => r.status === "returned")?.count || 0,
+        gone: goneCount,
+        returned: returnedCount,
         discarded: result.find((r) => r.status === "discarded")?.count || 0,
+        personal_use: result.find((r) => r.status === "personal_use")?.count || 0,
+        sold_or_live: reservedCount + soldCount + returnedCount + goneCount,
       };
 
       res.json(stats);
@@ -71,8 +78,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let query = db.select().from(vineItems);
       
       // Apply status filter
+      // "sold_or_live" is a special filter that shows both "reserved" and "sold" items
       if (status && typeof status === "string") {
-        query = query.where(eq(vineItems.status, status)) as any;
+        if (status === "sold_or_live") {
+          query = query.where(inArray(vineItems.status, ["reserved", "sold", "returned", "gone"])) as any;
+        } else {
+          query = query.where(eq(vineItems.status, status)) as any;
+        }
       }
       
       // Apply search filter (combine with status if both present)
@@ -85,12 +97,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (status && typeof status === "string") {
           // Both status and search filters
-          query = db.select().from(vineItems).where(
-            and(
-              eq(vineItems.status, status),
-              searchCondition
-            )
-          ) as any;
+          if (status === "sold_or_live") {
+            query = db.select().from(vineItems).where(
+              and(
+                inArray(vineItems.status, ["reserved", "sold", "returned", "gone"]),
+                searchCondition
+              )
+            ) as any;
+          } else {
+            query = db.select().from(vineItems).where(
+              and(
+                eq(vineItems.status, status),
+                searchCondition
+              )
+            ) as any;
+          }
         } else {
           // Only search filter
           query = query.where(searchCondition) as any;

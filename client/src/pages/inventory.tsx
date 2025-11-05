@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Upload, Package, AlertCircle, AlertTriangle, X, Check, Trash2, ChevronLeft, ChevronRight, ArrowDownUp } from "lucide-react";
+import { Search, Upload, Package, AlertCircle, AlertTriangle, X, Check, Trash2, ChevronLeft, ChevronRight, ArrowDownUp, User } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VineItem } from "@shared/schema";
 
-type StatusTab = "available" | "do_not_sell" | "gone";
+type StatusTab = "available" | "do_not_sell" | "sold_or_live" | "personal_use";
 type SortOrder = "recent" | "oldest" | "price_high" | "price_low";
 
 export default function Inventory() {
@@ -52,6 +52,8 @@ export default function Inventory() {
     gone: number;
     returned: number;
     discarded: number;
+    personal_use: number;
+    sold_or_live: number;
   }>({
     queryKey: ["/api/vine-items/stats"],
   });
@@ -154,7 +156,8 @@ export default function Inventory() {
   // Use stats from API instead of computing client-side
   const availableCount = stats?.available || 0;
   const doNotSellCount = stats?.do_not_sell || 0;
-  const goneCount = stats?.gone || 0;
+  const soldOrLiveCount = stats?.sold_or_live || 0;
+  const personalUseCount = stats?.personal_use || 0;
 
   return (
     <div className="flex-1 overflow-auto">
@@ -171,7 +174,7 @@ export default function Inventory() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Items</CardTitle>
@@ -210,12 +213,24 @@ export default function Inventory() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Gone</CardTitle>
-              <div className="h-3 w-3 rounded-full bg-chart-5" />
+              <CardTitle className="text-sm font-medium">Sold/Live</CardTitle>
+              <div className="h-3 w-3 rounded-full bg-chart-2" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-semibold text-chart-5" data-testid="text-gone-items">
-                {goneCount}
+              <div className="text-3xl font-semibold text-chart-2" data-testid="text-sold-live-items">
+                {soldOrLiveCount}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Personal Use</CardTitle>
+              <div className="h-3 w-3 rounded-full bg-chart-4" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-chart-4" data-testid="text-personal-use-items">
+                {personalUseCount}
               </div>
             </CardContent>
           </Card>
@@ -250,15 +265,18 @@ export default function Inventory() {
 
         {/* Tabs for status filtering */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="grid w-full grid-cols-3" data-testid="tabs-status">
+          <TabsList className="grid w-full grid-cols-4" data-testid="tabs-status">
             <TabsTrigger value="available" data-testid="tab-available">
               Available ({availableCount})
             </TabsTrigger>
             <TabsTrigger value="do_not_sell" data-testid="tab-do-not-sell">
               Do Not Sell ({doNotSellCount})
             </TabsTrigger>
-            <TabsTrigger value="gone" data-testid="tab-gone">
-              Gone ({goneCount})
+            <TabsTrigger value="sold_or_live" data-testid="tab-sold-live">
+              Sold/Live ({soldOrLiveCount})
+            </TabsTrigger>
+            <TabsTrigger value="personal_use" data-testid="tab-personal-use">
+              Personal Use ({personalUseCount})
             </TabsTrigger>
           </TabsList>
 
@@ -382,16 +400,16 @@ export default function Inventory() {
                                   Do Not Sell
                                 </Button>
                               )}
-                              {activeTab !== "gone" && (
+                              {activeTab !== "personal_use" && (
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={(e) => handleChangeStatus(e, item.vineItemId, "gone")}
-                                  data-testid={`button-gone-${item.vineItemId}`}
+                                  onClick={(e) => handleChangeStatus(e, item.vineItemId, "personal_use")}
+                                  data-testid={`button-personal-use-${item.vineItemId}`}
                                   disabled={updateStatusMutation.isPending}
                                 >
-                                  <Trash2 className="w-4 h-4 mr-1" />
-                                  Mark as Gone
+                                  <User className="w-4 h-4 mr-1" />
+                                  Personal Use
                                 </Button>
                               )}
                             </div>

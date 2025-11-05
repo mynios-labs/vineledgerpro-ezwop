@@ -5,7 +5,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums
-export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone"]);
+export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone", "personal_use"]);
 export const listingStateEnum = pgEnum("listing_state", ["draft", "live", "ended"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"]);
 export const eventTypeEnum = pgEnum("event_type", ["basis_add", "sale", "fee", "shipping_label", "label_refund", "return", "writeoff", "payout", "promotion_fee", "sales_tax_collected_by_marketplace"]);
