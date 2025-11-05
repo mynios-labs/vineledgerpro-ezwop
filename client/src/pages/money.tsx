@@ -1,15 +1,34 @@
-import { useQuery } from "@tanstack/react-query";
-import { DollarSign, TrendingUp, TrendingDown, Download, FileText, AlertTriangle } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
+import { DollarSign, TrendingUp, TrendingDown, Download, FileText, AlertTriangle, Package, ArrowUpDown, RotateCcw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import type { AccountingLedger } from "@shared/schema";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
-interface LedgerEntry extends AccountingLedger {
-  itemTitle?: string;
-  defective?: boolean;
+interface ItemFinancials {
+  inventoryId: string;
+  title: string;
+  asin: string;
+  status: string;
+  receivedDate: string;
+  publishedAt?: string;
+  orderDate?: string;
+  shippedAt?: string;
+  orderStatus?: string;
+  basisCents: number;
+  listPriceCents: number;
+  saleCents: number;
+  feesCents: number;
+  shippingCostsCents: number;
+  netProfitCents: number;
+  defective: boolean;
+  defectiveNotes?: string;
+  tracking?: string;
+  orderId?: string;
 }
 
 interface MoneyStats {
@@ -19,15 +38,45 @@ interface MoneyStats {
   totalPayout: number;
   realizedGain: number;
   realizedLoss: number;
+  totalListings: number;
+  activeListings: number;
+  totalOrders: number;
+  pendingShipments: number;
+  defectiveItems: number;
 }
 
+type SortField = "receivedDate" | "publishedAt" | "orderDate" | "netProfitCents" | "saleCents";
+type SortDirection = "asc" | "desc";
+
 export default function MoneyPage() {
+  const { toast } = useToast();
+  const [sortField, setSortField] = useState<SortField>("receivedDate");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
   const { data: stats, isLoading: statsLoading } = useQuery<MoneyStats>({
     queryKey: ["/api/accounting/stats"],
   });
 
-  const { data: ledger, isLoading: ledgerLoading } = useQuery<LedgerEntry[]>({
-    queryKey: ["/api/accounting/ledger"],
+  const { data: items, isLoading: itemsLoading } = useQuery<ItemFinancials[]>({
+    queryKey: ["/api/accounting/items"],
+  });
+
+  const returnToInventoryMutation = useMutation({
+    mutationFn: async ({ inventoryId, reason }: { inventoryId: string; reason: string }) => {
+      return apiRequest(`/api/inventory/${inventoryId}/return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/stats"] });
+      toast({ title: "Success", description: "Item returned to inventory" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
   const handleExportCSV = () => {
@@ -38,24 +87,61 @@ export default function MoneyPage() {
     window.open("/api/accounting/export/pdf", "_blank");
   };
 
-  const getEventTypeLabel = (eventType: string) => {
-    const labels: Record<string, string> = {
-      basis_add: "Basis Added",
-      sale: "Sale",
-      fee: "eBay Fee",
-      shipping_label: "Shipping Label",
-      label_refund: "Label Refund",
-      return: "Return",
-      writeoff: "Write-off",
-      payout: "Payout",
-      promotion_fee: "Promotion Fee",
-      sales_tax_collected_by_marketplace: "Sales Tax (Pass-through)",
-    };
-    return labels[eventType] || eventType;
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
   };
+
+  const handleReturnToInventory = (inventoryId: string, title: string) => {
+    const reason = prompt(`Return "${title}" to inventory. Reason (optional):`);
+    if (reason !== null) {
+      returnToInventoryMutation.mutate({ inventoryId, reason: reason || "Manual return" });
+    }
+  };
+
+  const sortedItems = items ? [...items].sort((a, b) => {
+    let aVal: any = a[sortField];
+    let bVal: any = b[sortField];
+
+    if (sortField === "receivedDate" || sortField === "publishedAt" || sortField === "orderDate") {
+      aVal = aVal ? new Date(aVal).getTime() : 0;
+      bVal = bVal ? new Date(bVal).getTime() : 0;
+    }
+
+    if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
+    if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  }) : [];
 
   const netProfitLoss = (stats?.realizedGain || 0) - (stats?.realizedLoss || 0);
   const isProfit = netProfitLoss >= 0;
+
+  const getStatusBadge = (item: ItemFinancials) => {
+    if (item.defective) {
+      return <Badge variant="destructive" data-testid={`badge-status-${item.inventoryId}`}>Defective</Badge>;
+    }
+    if (item.orderStatus === "shipped" || item.orderStatus === "delivered") {
+      return <Badge variant="default" data-testid={`badge-status-${item.inventoryId}`}>Completed</Badge>;
+    }
+    if (item.orderStatus === "paid") {
+      return <Badge variant="secondary" data-testid={`badge-status-${item.inventoryId}`}>Pending Ship</Badge>;
+    }
+    if (item.orderStatus === "cancelled") {
+      return <Badge variant="outline" data-testid={`badge-status-${item.inventoryId}`}>Cancelled</Badge>;
+    }
+    if (item.publishedAt) {
+      return <Badge variant="outline" data-testid={`badge-status-${item.inventoryId}`}>Listed</Badge>;
+    }
+    return <Badge variant="secondary" data-testid={`badge-status-${item.inventoryId}`}>Available</Badge>;
+  };
+
+  const canReturnToInventory = (item: ItemFinancials) => {
+    return item.orderStatus === "cancelled" || (item.publishedAt && !item.orderDate);
+  };
 
   return (
     <div className="flex-1 overflow-auto">
@@ -63,7 +149,7 @@ export default function MoneyPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Money & Ledger</h1>
-            <p className="text-sm text-muted-foreground mt-1">Track sales, expenses, and realized gains/losses</p>
+            <p className="text-sm text-muted-foreground mt-1">Track sales, expenses, and item lifecycle financials</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleExportCSV} data-testid="button-export-csv">
@@ -77,7 +163,7 @@ export default function MoneyPage() {
           </div>
         </div>
 
-        {/* Stats Cards */}
+        {/* Primary Financial Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
@@ -126,7 +212,10 @@ export default function MoneyPage() {
               )}
             </CardContent>
           </Card>
+        </div>
 
+        {/* Secondary Performance Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Payouts</CardTitle>
@@ -180,68 +269,214 @@ export default function MoneyPage() {
           </Card>
         </div>
 
-        {/* Ledger Table */}
+        {/* Business Metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Listed</CardTitle>
+              <Package className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-total-listings">
+                  {stats?.totalListings || 0}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Active</CardTitle>
+              <Package className="h-4 w-4 text-chart-1" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-active-listings">
+                  {stats?.activeListings || 0}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Sold</CardTitle>
+              <DollarSign className="h-4 w-4 text-chart-1" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-total-orders">
+                  {stats?.totalOrders || 0}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pending Ship</CardTitle>
+              <Package className="h-4 w-4 text-chart-3" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-pending-shipments">
+                  {stats?.pendingShipments || 0}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Defective</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-chart-5" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-defective-items">
+                  {stats?.defectiveItems || 0}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Avg Profit</CardTitle>
+              <TrendingUp className="h-4 w-4 text-chart-1" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-9 w-16" />
+              ) : (
+                <div className="text-3xl font-semibold" data-testid="text-avg-profit">
+                  ${stats?.totalOrders && stats.totalOrders > 0 ? (netProfitLoss / stats.totalOrders / 100).toFixed(0) : "0"}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Item-Centric Financial Table */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Accounting Ledger</CardTitle>
+            <CardTitle className="text-lg">Item Lifecycle Financials</CardTitle>
           </CardHeader>
           <CardContent>
-            {ledgerLoading ? (
+            {itemsLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4, 5].map((i) => (
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : ledger && ledger.length > 0 ? (
+            ) : sortedItems && sortedItems.length > 0 ? (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Item</TableHead>
-                      <TableHead>Event Type</TableHead>
-                      <TableHead>Direction</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead>Note</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead className="cursor-pointer hover-elevate" onClick={() => handleSort("receivedDate")}>
+                        <div className="flex items-center gap-1">
+                          Received
+                          <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="cursor-pointer hover-elevate" onClick={() => handleSort("publishedAt")}>
+                        <div className="flex items-center gap-1">
+                          Listed
+                          <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="cursor-pointer hover-elevate" onClick={() => handleSort("orderDate")}>
+                        <div className="flex items-center gap-1">
+                          Sold
+                          <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-right cursor-pointer hover-elevate" onClick={() => handleSort("saleCents")}>
+                        <div className="flex items-center justify-end gap-1">
+                          Sale Price
+                          <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-right">Fees</TableHead>
+                      <TableHead className="text-right">Shipping</TableHead>
+                      <TableHead className="text-right cursor-pointer hover-elevate" onClick={() => handleSort("netProfitCents")}>
+                        <div className="flex items-center justify-end gap-1">
+                          Net P/L
+                          <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {ledger.map((entry) => (
-                      <TableRow key={entry.ledgerId} data-testid={`row-ledger-${entry.ledgerId}`}>
-                        <TableCell className="font-mono text-sm" data-testid={`text-date-${entry.ledgerId}`}>
-                          {new Date(entry.txDate).toLocaleDateString()}
+                    {sortedItems.map((item) => (
+                      <TableRow key={item.inventoryId} data-testid={`row-item-${item.inventoryId}`}>
+                        <TableCell>
+                          {getStatusBadge(item)}
                         </TableCell>
-                        <TableCell className="max-w-xs" data-testid={`text-item-${entry.ledgerId}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="truncate">{entry.itemTitle || "-"}</span>
-                            {entry.defective && (
-                              <Badge variant="destructive" size="sm" data-testid={`badge-defective-${entry.ledgerId}`}>
-                                <AlertTriangle className="w-3 h-3 mr-1" />
-                                Defective
-                              </Badge>
+                        <TableCell className="max-w-xs">
+                          <div className="flex flex-col gap-1">
+                            <span className="truncate font-medium" data-testid={`text-title-${item.inventoryId}`}>
+                              {item.title}
+                            </span>
+                            {item.defective && item.defectiveNotes && (
+                              <span className="text-xs text-muted-foreground">
+                                {item.defectiveNotes}
+                              </span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" data-testid={`badge-event-${entry.ledgerId}`}>
-                            {getEventTypeLabel(entry.eventType)}
-                          </Badge>
+                        <TableCell className="font-mono text-sm" data-testid={`text-received-${item.inventoryId}`}>
+                          {new Date(item.receivedDate).toLocaleDateString()}
                         </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={entry.direction === "credit" ? "default" : "secondary"}
-                            data-testid={`badge-direction-${entry.ledgerId}`}
-                          >
-                            {entry.direction}
-                          </Badge>
+                        <TableCell className="font-mono text-sm" data-testid={`text-listed-${item.inventoryId}`}>
+                          {item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : "-"}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm" data-testid={`text-sold-${item.inventoryId}`}>
+                          {item.orderDate ? new Date(item.orderDate).toLocaleDateString() : "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono" data-testid={`text-sale-${item.inventoryId}`}>
+                          {item.saleCents > 0 ? `$${(item.saleCents / 100).toFixed(2)}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-chart-5" data-testid={`text-fees-${item.inventoryId}`}>
+                          {item.feesCents > 0 ? `-$${(item.feesCents / 100).toFixed(2)}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-chart-5" data-testid={`text-shipping-${item.inventoryId}`}>
+                          {item.shippingCostsCents > 0 ? `-$${(item.shippingCostsCents / 100).toFixed(2)}` : "-"}
                         </TableCell>
                         <TableCell className={`text-right font-mono font-semibold ${
-                          entry.direction === "credit" ? "text-chart-1" : "text-chart-5"
-                        }`} data-testid={`text-amount-${entry.ledgerId}`}>
-                          {entry.direction === "credit" ? "+" : "-"}${(entry.amountCents / 100).toFixed(2)}
+                          item.netProfitCents >= 0 ? "text-chart-1" : "text-chart-5"
+                        }`} data-testid={`text-profit-${item.inventoryId}`}>
+                          {item.netProfitCents !== 0 ? (
+                            <>{item.netProfitCents > 0 ? "+" : ""}${(item.netProfitCents / 100).toFixed(2)}</>
+                          ) : "-"}
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-xs truncate" data-testid={`text-note-${entry.ledgerId}`}>
-                          {entry.note || "-"}
+                        <TableCell>
+                          {canReturnToInventory(item) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleReturnToInventory(item.inventoryId, item.title)}
+                              data-testid={`button-return-${item.inventoryId}`}
+                            >
+                              <RotateCcw className="w-3 h-3 mr-1" />
+                              Return
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -250,8 +485,8 @@ export default function MoneyPage() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <DollarSign className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No ledger entries yet</p>
+                <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No items yet</p>
               </div>
             )}
           </CardContent>
