@@ -64,6 +64,21 @@ Preferred communication style: Simple, everyday language.
   - `/api/accounting/stats` - Comprehensive business metrics (12 total stats)
   - `/api/inventory/:inventoryId/return` - Return items to available inventory
 
+**Tax Report Page:**
+- **Amazon 1099 Reconciliation:** Critical feature to prevent double taxation
+  - Track Amazon Vine 1099-MISC/NEC forms by year
+  - Compare Amazon's reported 1099 amounts with calculated ETV from imports
+  - Highlight discrepancies between reported vs calculated values
+  - User can manually input Amazon 1099 amounts received at year-end
+  - Comprehensive tax notes explaining double taxation risk and proper treatment
+- **Annual Tax Summary:** Year-by-year breakdown of sales, expenses, and net taxable income
+- **Cross-Year Analysis:** Items received in one year but sold in another (due to 6-month waiting period)
+- **Current Inventory Tracking:** Unsold items by year received with basis value
+- **API Endpoints:**
+  - `/api/tax-report` - Comprehensive annual tax data with Amazon 1099 reconciliation
+  - `/api/amazon-1099` - CRUD operations for Amazon 1099 entry management
+  - `/api/accounting/export/csv` - Full ledger export for CPA review
+
 **Draft Listing Workflow:**
 - No AI price suggestions - user sets prices manually based on market research
 - No auto-loaded dimensions - user measures and enters weight/dimensions manually
@@ -101,8 +116,13 @@ Preferred communication style: Simple, everyday language.
    - **Implementation Status:** Complete with database transactions for atomicity
    - **Automatic Sync:** Background job polls eBay every hour to sync new orders and create ledger entries
    - **Tax Compliance:** CSV export includes all ledger entries with defective item flags for CPA review
-5. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
-6. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
+5. **Amazon 1099 Tracking:** `amazon_1099_data` - Stores Amazon Vine 1099-MISC/NEC amounts by year for reconciliation
+   - **User Scoping:** Multi-tenant ready with userId field (currently defaults to "default" for single-user deployment)
+   - **Unique Constraint:** Composite key on (userId, taxYear) prevents duplicate entries per user
+   - **Reconciliation:** Compares reported 1099 amounts with calculated ETV to detect discrepancies
+   - **Double Taxation Prevention:** Ensures proper cost basis deduction when items are sold
+6. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
+7. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
 
 **Key Design Decisions:**
 - Unique constraint on `vine_items` using composite key (ASIN + received_date + ETV + serial) to prevent duplicate inventory
