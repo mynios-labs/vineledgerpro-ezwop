@@ -395,7 +395,7 @@ export default function MoneyPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Status</TableHead>
-                      <TableHead className="w-64">Title</TableHead>
+                      <TableHead className="max-w-[120px]">Title</TableHead>
                       <TableHead className="cursor-pointer hover-elevate" onClick={() => handleSort("receivedDate")}>
                         <div className="flex items-center gap-1">
                           Received
@@ -438,7 +438,7 @@ export default function MoneyPage() {
                         <TableCell>
                           {getStatusBadge(item)}
                         </TableCell>
-                        <TableCell className="w-64">
+                        <TableCell className="max-w-[120px]">
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
