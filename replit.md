@@ -35,8 +35,23 @@ Preferred communication style: Simple, everyday language.
 - Draft listing creation with AI-powered content generation (accessible only from inventory page, not in navigation)
 - Orders page with shipping label purchase
 - Messages & Returns for customer communication
-- Money & Ledger for accounting with CSV/PDF exports
+- Money & Ledger for item-centric financial tracking with lifecycle view, comprehensive stats, and CSV/PDF exports
 - Health dashboard for monitoring policy compliance
+
+**Money & Ledger Page (Item-Centric View):**
+- **Three rows of financial stats:**
+  - Row 1: Total Sales, Total Fees, Shipping Costs
+  - Row 2: Total Payouts, Realized Gains, Net Profit/Loss
+  - Row 3: Business metrics (Total Listed, Active, Sold, Pending Ship, Defective, Avg Profit)
+- **Item lifecycle table** showing each item's complete financial history:
+  - Status, Title, Received, Listed, Sold dates
+  - Sale Price, Fees, Shipping Costs, Net P/L
+  - Sortable columns for easy analysis
+  - "Return to Inventory" action for cancelled orders and unsold listings
+- **API Endpoints:**
+  - `/api/accounting/items` - Full item-centric financial data with lifecycle dates and cost rollups
+  - `/api/accounting/stats` - Comprehensive business metrics (12 total stats)
+  - `/api/inventory/:inventoryId/return` - Return items to available inventory
 
 **Draft Listing Workflow:**
 - No AI price suggestions - user sets prices manually based on market research
