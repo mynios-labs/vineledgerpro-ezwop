@@ -49,3 +49,54 @@ export async function estimateShipping(params: {
     max: baseRate * 2,
   };
 }
+
+export async function getTracking(carrier: string, trackingNumber: string): Promise<any> {
+  const response = await fetch(`${SHIPPO_API_BASE}/tracks/${carrier}/${trackingNumber}`, {
+    method: "GET",
+    headers: {
+      Authorization: `ShippoToken ${process.env.SHIPPO_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  return response.json();
+}
+
+export async function getTransaction(transactionId: string): Promise<any> {
+  const response = await fetch(`${SHIPPO_API_BASE}/transactions/${transactionId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `ShippoToken ${process.env.SHIPPO_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  return response.json();
+}
+
+export async function requestRefund(transactionId: string): Promise<any> {
+  const response = await fetch(`${SHIPPO_API_BASE}/refunds/`, {
+    method: "POST",
+    headers: {
+      Authorization: `ShippoToken ${process.env.SHIPPO_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      transaction: transactionId,
+    }),
+  });
+
+  return response.json();
+}
+
+export async function listAllTransactions(): Promise<any> {
+  const response = await fetch(`${SHIPPO_API_BASE}/transactions?results=100`, {
+    method: "GET",
+    headers: {
+      Authorization: `ShippoToken ${process.env.SHIPPO_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  return response.json();
+}

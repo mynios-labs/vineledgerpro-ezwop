@@ -29,7 +29,7 @@ import {
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder } from "./lib/ebay";
-import { estimateShipping, createShipment, purchaseLabel } from "./lib/shippo";
+import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -1673,6 +1673,7 @@ Output only JSON:
           defective: row.vine_items.defective,
           defectiveNotes: row.vine_items.defectiveNotes,
           tracking: row.orders?.tracking || null,
+          carrier: row.orders?.carrier || null,
           orderId: row.orders?.orderId || null,
         };
       });
@@ -1728,6 +1729,27 @@ Output only JSON:
     try {
       // In production, would generate PDF using PDFKit
       res.status(501).json({ error: "PDF export not yet implemented" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get Shippo tracking information
+  app.get("/api/shippo/tracking/:carrier/:trackingNumber", async (req, res) => {
+    try {
+      const { carrier, trackingNumber } = req.params;
+      const tracking = await getTracking(carrier, trackingNumber);
+      res.json(tracking);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all Shippo transactions
+  app.get("/api/shippo/transactions", async (_req, res) => {
+    try {
+      const transactions = await listAllTransactions();
+      res.json(transactions);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
