@@ -126,6 +126,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderedQuery = query.orderBy(desc(vineItems.etvCents));
       } else if (sort === "price_low") {
         orderedQuery = query.orderBy(asc(vineItems.etvCents));
+      } else if (sort === "six_months_plus") {
+        // Filter for items 6+ months old, ordered by oldest first
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const filteredQuery = query.where(sql`${vineItems.receivedDate} <= ${sixMonthsAgo.toISOString()}`);
+        orderedQuery = (filteredQuery as any).orderBy(asc(vineItems.receivedDate));
       } else {
         // Default: "recent" - most recent first
         orderedQuery = query.orderBy(desc(vineItems.receivedDate));

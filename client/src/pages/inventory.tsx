@@ -11,13 +11,22 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VineItem } from "@shared/schema";
 
 type StatusTab = "available" | "do_not_sell" | "sold_or_live" | "personal_use";
-type SortOrder = "recent" | "oldest" | "price_high" | "price_low";
+type SortOrder = "recent" | "oldest" | "price_high" | "price_low" | "six_months_plus";
+
+// Helper function to check if item is less than 6 months old
+const isLessThan6MonthsOld = (receivedDate: string): boolean => {
+  const received = new Date(receivedDate);
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  return received > sixMonthsAgo;
+};
 
 export default function Inventory() {
   const [, setLocation] = useLocation();
@@ -25,6 +34,8 @@ export default function Inventory() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("recent");
   const [activeTab, setActiveTab] = useState<StatusTab>("available");
   const [currentPage, setCurrentPage] = useState(1);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [selectedItemForListing, setSelectedItemForListing] = useState<VineItem | null>(null);
   const { toast } = useToast();
   
   const itemsPerPage = 20;
@@ -137,6 +148,28 @@ export default function Inventory() {
 
   const handleSelectItem = (vineItemId: string) => {
     setLocation(`/draft?vineItemId=${vineItemId}`);
+  };
+
+  const handleCreateListingClick = (e: React.MouseEvent, item: VineItem) => {
+    e.stopPropagation();
+    
+    // Check if item is less than 6 months old
+    if (isLessThan6MonthsOld(item.receivedDate)) {
+      // Show confirmation dialog
+      setSelectedItemForListing(item);
+      setConfirmDialogOpen(true);
+    } else {
+      // Proceed directly to listing creation
+      setLocation(`/draft?vineItemId=${item.vineItemId}`);
+    }
+  };
+
+  const handleConfirmCreateListing = () => {
+    if (selectedItemForListing) {
+      setLocation(`/draft?vineItemId=${selectedItemForListing.vineItemId}`);
+      setConfirmDialogOpen(false);
+      setSelectedItemForListing(null);
+    }
   };
 
   const handleToggleDefective = (e: React.MouseEvent, item: VineItem) => {
@@ -259,6 +292,7 @@ export default function Inventory() {
               <SelectItem value="oldest" data-testid="option-oldest">Oldest First</SelectItem>
               <SelectItem value="price_high" data-testid="option-price-high">Price: High to Low</SelectItem>
               <SelectItem value="price_low" data-testid="option-price-low">Price: Low to High</SelectItem>
+              <SelectItem value="six_months_plus" data-testid="option-six-months">6+ Months Old</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -346,12 +380,22 @@ export default function Inventory() {
                                 <span data-testid={`text-etv-${item.vineItemId}`}>
                                   ETV: ${(item.etvCents / 100).toFixed(2)}
                                 </span>
-                                <span data-testid={`text-received-${item.vineItemId}`}>
+                                <span data-testid={`text-received-${item.vineItemId}`} className={isLessThan6MonthsOld(item.receivedDate) ? "text-destructive font-semibold" : ""}>
                                   Received: {new Date(item.receivedDate).toLocaleDateString()}
+                                  {isLessThan6MonthsOld(item.receivedDate) && (
+                                    <Badge variant="destructive" className="ml-2" data-testid={`badge-age-warning-${item.vineItemId}`}>
+                                      <AlertTriangle className="w-3 h-3 mr-1" />
+                                      Less than 6 months
+                                    </Badge>
+                                  )}
                                 </span>
                               </div>
                             </div>
-                            <Button variant="outline" data-testid={`button-select-${item.vineItemId}`}>
+                            <Button 
+                              variant="outline" 
+                              onClick={(e) => handleCreateListingClick(e, item)}
+                              data-testid={`button-select-${item.vineItemId}`}
+                            >
                               Create Listing
                             </Button>
                           </div>
@@ -468,7 +512,57 @@ export default function Inventory() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* Footer note about 6-month policy */}
+        {activeTab === "available" && filteredItems.some(item => isLessThan6MonthsOld(item.receivedDate)) && (
+          <Alert variant="destructive" className="mt-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Policy Reminder:</strong> Items less than 6 months old are highlighted in red. 
+              It's recommended to wait at least 6 months before listing to comply with Amazon's terms of service. 
+              You can still create listings for these items, but you'll need to confirm your decision.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
+
+      {/* Confirmation Dialog for items < 6 months old */}
+      <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <DialogContent data-testid="dialog-age-confirmation">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              Item Less Than 6 Months Old
+            </DialogTitle>
+            <DialogDescription>
+              This item was received on {selectedItemForListing && new Date(selectedItemForListing.receivedDate).toLocaleDateString()} and is less than 6 months old.
+              <br /><br />
+              <strong>It's recommended to wait at least 6 months before listing items to comply with Amazon's Vine program terms of service.</strong>
+              <br /><br />
+              Are you sure you want to create a listing for this item now?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setConfirmDialogOpen(false);
+                setSelectedItemForListing(null);
+              }}
+              data-testid="button-cancel-listing"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmCreateListing}
+              data-testid="button-confirm-listing"
+            >
+              Continue Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
