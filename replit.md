@@ -69,10 +69,11 @@ Preferred communication style: Simple, everyday language.
 3. **Order Fulfillment:** `orders`, `buyers` - Tracks sales and customer information
 4. **Financial Tracking:** `accounting_ledger` - Double-entry bookkeeping with event types for basis, sales, fees, shipping, payouts
    - **Event Types:** `basis_add`, `sale`, `fee`, `shipping_label`, `label_refund`, `return`, `writeoff`, `payout`, `promotion_fee`, `sales_tax_collected_by_marketplace`
-   - **eBay Fee Tracking:** Orders table includes `ebayFeesCents` field; ledger designed to record "fee" and "promotion_fee" entries
-   - **Shippo Charge Tracking:** Ledger designed to record "shipping_label" entries for label purchases and "label_refund" for refunds
-   - **Post-Shipping Adjustments:** Schema supports tracking weight correction charges via additional "shipping_label" entries
-   - **Implementation Status:** Schema complete; ledger entry creation for fees/shipping needs to be added during order sync and label purchase workflows
+   - **eBay Fee Tracking:** Fully implemented - orders automatically create ledger entries for final value fees (13.25% estimation) and promotion fees
+   - **Shippo Charge Tracking:** Fully implemented - label purchases create "shipping_label" ledger entries; refunds create "label_refund" entries
+   - **Post-Shipping Adjustments:** Fully implemented - Shippo webhook handles weight correction charges via additional "shipping_label" entries
+   - **Implementation Status:** Complete with database transactions for atomicity
+   - **Automatic Sync:** Background job polls eBay every hour to sync new orders and create ledger entries
    - **Tax Compliance:** CSV export includes all ledger entries with defective item flags for CPA review
 5. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
 6. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
