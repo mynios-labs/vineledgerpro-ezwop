@@ -75,63 +75,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { search, sort, status } = req.query;
       
-      let query = db.select().from(vineItems);
+      // Build all filter conditions
+      const conditions = [];
       
-      // Apply status filter
-      // "sold_or_live" is a special filter that shows both "reserved" and "sold" items
+      // Add status filter
       if (status && typeof status === "string") {
         if (status === "sold_or_live") {
-          query = query.where(inArray(vineItems.status, ["reserved", "sold", "returned", "gone"])) as any;
+          conditions.push(inArray(vineItems.status, ["reserved", "sold", "returned", "gone"]));
         } else {
-          query = query.where(eq(vineItems.status, status)) as any;
+          conditions.push(eq(vineItems.status, status));
         }
       }
       
-      // Apply search filter (combine with status if both present)
+      // Add search filter
       if (search && typeof search === "string") {
-        const searchCondition = or(
-          ilike(vineItems.titleNorm, `%${search}%`),
-          ilike(vineItems.asin, `%${search}%`),
-          ilike(vineItems.upc, `%${search}%`)
+        conditions.push(
+          or(
+            ilike(vineItems.titleNorm, `%${search}%`),
+            ilike(vineItems.asin, `%${search}%`),
+            ilike(vineItems.upc, `%${search}%`)
+          )
         );
-        
-        if (status && typeof status === "string") {
-          // Both status and search filters
-          if (status === "sold_or_live") {
-            query = db.select().from(vineItems).where(
-              and(
-                inArray(vineItems.status, ["reserved", "sold", "returned", "gone"]),
-                searchCondition
-              )
-            ) as any;
-          } else {
-            query = db.select().from(vineItems).where(
-              and(
-                eq(vineItems.status, status),
-                searchCondition
-              )
-            ) as any;
-          }
-        } else {
-          // Only search filter
-          query = query.where(searchCondition) as any;
-        }
+      }
+      
+      // Add 6-month filter if using six_months_plus sort
+      if (sort === "six_months_plus") {
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        conditions.push(sql`${vineItems.receivedDate} <= ${sixMonthsAgo.toISOString()}`);
+      }
+      
+      // Build query with all conditions
+      let query = db.select().from(vineItems);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
       }
 
       // Apply sorting
       let orderedQuery;
-      if (sort === "oldest") {
+      if (sort === "oldest" || sort === "six_months_plus") {
         orderedQuery = query.orderBy(asc(vineItems.receivedDate));
       } else if (sort === "price_high") {
         orderedQuery = query.orderBy(desc(vineItems.etvCents));
       } else if (sort === "price_low") {
         orderedQuery = query.orderBy(asc(vineItems.etvCents));
-      } else if (sort === "six_months_plus") {
-        // Filter for items 6+ months old, ordered by oldest first
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const filteredQuery = query.where(sql`${vineItems.receivedDate} <= ${sixMonthsAgo.toISOString()}`);
-        orderedQuery = (filteredQuery as any).orderBy(asc(vineItems.receivedDate));
       } else {
         // Default: "recent" - most recent first
         orderedQuery = query.orderBy(desc(vineItems.receivedDate));
