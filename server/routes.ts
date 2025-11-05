@@ -1535,6 +1535,94 @@ Output only JSON:
     }
   });
 
+  // Shippo webhook handler for post-shipping adjustments
+  app.post("/api/webhooks/shippo", async (req, res) => {
+    try {
+      const { event, data } = req.body;
+
+      // Log the webhook for debugging
+      console.log("Shippo webhook received:", event, data?.object_id);
+
+      // We're primarily interested in transaction updates that include additional charges
+      if (event === "transaction_updated" || event === "transaction_created") {
+        const transaction = data;
+        
+        if (!transaction || !transaction.object_id) {
+          return res.status(400).json({ error: "Invalid webhook payload" });
+        }
+
+        // Check if this is a weight correction or additional charge
+        // Shippo sends updated transactions when they detect actual weight differs from declared
+        const trackingNumber = transaction.tracking_number;
+        
+        if (!trackingNumber) {
+          // No tracking number means we can't match to an order
+          return res.status(200).json({ received: true, skipped: "no tracking number" });
+        }
+
+        // Find the order by tracking number
+        const [order] = await db
+          .select({
+            orderId: orders.orderId,
+            inventoryId: listings.inventoryId,
+            tracking: orders.tracking,
+          })
+          .from(orders)
+          .innerJoin(listings, eq(orders.listingId, listings.listingId))
+          .where(eq(orders.tracking, trackingNumber));
+
+        if (!order) {
+          console.warn(`Order not found for tracking number: ${trackingNumber}`);
+          return res.status(200).json({ received: true, skipped: "order not found" });
+        }
+
+        // Check if there are any additional charges beyond the original rate
+        // This happens when actual weight > declared weight
+        const originalRateCents = Math.round(parseFloat(transaction.rate) * 100);
+        const additionalChargeCents = transaction.additional_charge_amount 
+          ? Math.round(parseFloat(transaction.additional_charge_amount) * 100)
+          : 0;
+
+        if (additionalChargeCents > 0) {
+          // Check if we've already logged this adjustment to avoid duplicates
+          const [existingAdjustment] = await db
+            .select()
+            .from(accountingLedger)
+            .where(
+              and(
+                eq(accountingLedger.orderId, order.orderId),
+                eq(accountingLedger.eventType, "shipping_label"),
+                like(accountingLedger.note, `%${transaction.object_id}%`)
+              )
+            );
+
+          if (!existingAdjustment) {
+            // Create ledger entry for the additional shipping charge
+            await db.insert(accountingLedger).values({
+              inventoryId: order.inventoryId,
+              orderId: order.orderId,
+              eventType: "shipping_label",
+              amountCents: additionalChargeCents,
+              direction: "debit",
+              note: `Shippo post-shipping adjustment (weight correction) - Transaction: ${transaction.object_id}`,
+            });
+
+            console.log(`Created ledger entry for weight correction: ${additionalChargeCents} cents`);
+          } else {
+            console.log(`Adjustment already logged for transaction ${transaction.object_id}`);
+          }
+        }
+      }
+
+      // Always return 200 to acknowledge receipt
+      res.status(200).json({ received: true });
+    } catch (error: any) {
+      console.error("Error processing Shippo webhook:", error);
+      // Return 200 anyway to prevent Shippo from retrying
+      res.status(200).json({ received: true, error: error.message });
+    }
+  });
+
   // Get health metrics
   app.get("/api/health/metrics", async (_req, res) => {
     try {
