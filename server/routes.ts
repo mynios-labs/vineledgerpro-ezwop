@@ -1193,6 +1193,127 @@ Output only JSON:
     }
   });
 
+  // Purchase shipping label for an order
+  app.post("/api/orders/:orderId/ship", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { rateId, shippoTransactionId } = req.body;
+
+      if (!rateId) {
+        return res.status(400).json({ error: "rateId required" });
+      }
+
+      // Get the order with listing and inventory details
+      const [order] = await db
+        .select({
+          orderId: orders.orderId,
+          ebayOrderId: orders.ebayOrderId,
+          listingId: orders.listingId,
+          inventoryId: listings.inventoryId,
+          status: orders.status,
+        })
+        .from(orders)
+        .innerJoin(listings, eq(orders.listingId, listings.listingId))
+        .where(eq(orders.orderId, orderId));
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      if (order.status === "shipped") {
+        return res.status(400).json({ error: "Order already shipped" });
+      }
+
+      // Purchase the label from Shippo
+      const transaction = await purchaseLabel(rateId);
+
+      if (transaction.status !== "SUCCESS") {
+        return res.status(400).json({ 
+          error: "Failed to purchase label",
+          details: transaction.messages 
+        });
+      }
+
+      // Extract label details
+      const trackingNumber = transaction.tracking_number;
+      const carrier = "UPS"; // We only use UPS
+      const labelUrl = transaction.label_url;
+      const shippingCostCents = Math.round(parseFloat(transaction.rate) * 100);
+
+      // Update order with tracking and status
+      await db.update(orders)
+        .set({
+          tracking: trackingNumber,
+          carrier,
+          status: "shipped",
+        })
+        .where(eq(orders.orderId, orderId));
+
+      // Create ledger entry for shipping label purchase (debit - expense)
+      await db.insert(accountingLedger).values({
+        inventoryId: order.inventoryId,
+        orderId: order.orderId,
+        eventType: "shipping_label",
+        amountCents: shippingCostCents,
+        direction: "debit",
+        note: `Shippo label purchase - ${carrier} - Tracking: ${trackingNumber} - Transaction: ${transaction.object_id}`,
+      });
+
+      res.json({
+        success: true,
+        tracking: trackingNumber,
+        carrier,
+        labelUrl,
+        shippingCostCents,
+        shippoTransactionId: transaction.object_id,
+      });
+    } catch (error: any) {
+      console.error("Error purchasing shipping label:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Void/refund a shipping label
+  app.post("/api/orders/:orderId/void-label", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { refundAmountCents, shippoTransactionId } = req.body;
+
+      if (!refundAmountCents) {
+        return res.status(400).json({ error: "refundAmountCents required" });
+      }
+
+      // Get the order
+      const [order] = await db
+        .select({
+          orderId: orders.orderId,
+          inventoryId: listings.inventoryId,
+        })
+        .from(orders)
+        .innerJoin(listings, eq(orders.listingId, listings.listingId))
+        .where(eq(orders.orderId, orderId));
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Create ledger entry for label refund (credit - reverses expense)
+      await db.insert(accountingLedger).values({
+        inventoryId: order.inventoryId,
+        orderId: order.orderId,
+        eventType: "label_refund",
+        amountCents: refundAmountCents,
+        direction: "credit",
+        note: `Shippo label void/refund - Transaction: ${shippoTransactionId || 'unknown'}`,
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error voiding label:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get messages
   app.get("/api/messages", async (_req, res) => {
     try {
