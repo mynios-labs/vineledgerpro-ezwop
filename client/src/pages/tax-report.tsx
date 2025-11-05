@@ -45,6 +45,15 @@ type Amazon1099Entry = {
   updatedAt: Date;
 };
 
+type Ebay1099Entry = {
+  id: number;
+  taxYear: number;
+  amountCents: number;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type TaxReport = {
   annualSummary: YearData[];
   crossYearAnalysis: CrossYearItem[];
@@ -67,6 +76,15 @@ type TaxReport = {
       year: number;
       calculatedEtvCents: number;
       reported1099Cents: number | null;
+      hasDiscrepancy: boolean;
+    }>;
+  };
+  ebay1099: {
+    entries: Ebay1099Entry[];
+    salesByYear: Array<{
+      year: number;
+      calculatedGrossSalesCents: number;
+      reported1099KCents: number | null;
       hasDiscrepancy: boolean;
     }>;
   };
@@ -181,6 +199,114 @@ function Amazon1099Dialog({
             onClick={() => saveMutation.mutate()}
             disabled={!amount || saveMutation.isPending}
             data-testid="button-save-1099"
+          >
+            {saveMutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Ebay1099Dialog({
+  year,
+  existingAmount,
+  existingNotes,
+}: {
+  year: number;
+  existingAmount?: number;
+  existingNotes?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(existingAmount ? (existingAmount / 100).toFixed(2) : "");
+  const [notes, setNotes] = useState(existingNotes || "");
+  const { toast } = useToast();
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const amountCents = Math.round(parseFloat(amount) * 100);
+      return apiRequest("/api/ebay-1099", "POST", {
+        taxYear: year,
+        amountCents,
+        notes: notes.trim() || null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tax-report"] });
+      toast({
+        title: "eBay 1099-K saved",
+        description: `Successfully saved ${year} eBay 1099-K data`,
+      });
+      setOpen(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error saving data",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid={`button-edit-ebay-1099-${year}`}
+        >
+          {existingAmount ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          <span className="ml-2">{existingAmount ? "Edit" : "Add"} {year}</span>
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>eBay 1099-K for {year}</DialogTitle>
+          <DialogDescription>
+            Enter the total amount from your eBay 1099-K form for tax year {year}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="ebay-amount">Amount from 1099-K</Label>
+            <Input
+              id="ebay-amount"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              data-testid="input-ebay-1099-amount"
+            />
+            <p className="text-sm text-muted-foreground">
+              Enter the gross proceeds amount from your eBay 1099-K form
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ebay-notes">Notes (Optional)</Label>
+            <Textarea
+              id="ebay-notes"
+              placeholder="Any notes about this tax year..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              data-testid="input-ebay-1099-notes"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            data-testid="button-cancel-ebay"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!amount || saveMutation.isPending}
+            data-testid="button-save-ebay-1099"
           >
             {saveMutation.isPending ? "Saving..." : "Save"}
           </Button>
@@ -413,6 +539,126 @@ export default function TaxReport() {
                 <li>
                   Provide both this report AND your Amazon 1099 forms to your CPA to ensure proper
                   cost basis deductions
+                </li>
+              </ol>
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+
+      {/* eBay 1099-K Reconciliation */}
+      <Card className="border-primary">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            eBay 1099-K Reconciliation
+          </CardTitle>
+          <CardDescription>
+            Track eBay 1099-K forms and reconcile with calculated gross sales to ensure accurate tax reporting
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tax Year</TableHead>
+                  <TableHead className="text-right">Calculated Gross Sales</TableHead>
+                  <TableHead className="text-right">eBay 1099-K Amount</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.ebay1099.salesByYear.map((yearData) => {
+                  const existing1099 = report.ebay1099.entries.find(
+                    (e) => e.taxYear === yearData.year
+                  );
+                  const variance = yearData.reported1099KCents
+                    ? yearData.calculatedGrossSalesCents - yearData.reported1099KCents
+                    : null;
+
+                  return (
+                    <TableRow
+                      key={yearData.year}
+                      data-testid={`row-ebay-1099-${yearData.year}`}
+                      className={yearData.hasDiscrepancy ? "bg-primary/5" : ""}
+                    >
+                      <TableCell className="font-medium">
+                        {yearData.year}
+                        {yearData.hasDiscrepancy && (
+                          <Badge variant="default" className="ml-2">
+                            Discrepancy
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(yearData.calculatedGrossSalesCents)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {yearData.reported1099KCents ? (
+                          formatCurrency(yearData.reported1099KCents)
+                        ) : (
+                          <span className="text-muted-foreground">Not entered</span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-mono ${
+                          variance && Math.abs(variance) > 100
+                            ? "text-primary font-semibold"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {variance !== null ? (
+                          <>
+                            {variance > 0 ? "+" : ""}
+                            {formatCurrency(variance)}
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Ebay1099Dialog
+                          year={yearData.year}
+                          existingAmount={existing1099?.amountCents}
+                          existingNotes={existing1099?.notes || undefined}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {report.ebay1099.salesByYear.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No sales recorded yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription className="text-sm">
+              <p className="font-medium mb-1">How to use this section:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>
+                  "Calculated Gross Sales" shows the total eBay sales each year (from your order
+                  data)
+                </li>
+                <li>
+                  When you receive your eBay 1099-K form at year-end, click "Add" to enter the
+                  reported gross proceeds
+                </li>
+                <li>
+                  Compare the two values - they should match closely. Discrepancies may indicate
+                  missing order data
+                </li>
+                <li>
+                  Remember: eBay 1099-K shows GROSS sales only - you must deduct ETV (cost basis)
+                  and expenses to calculate taxable income
                 </li>
               </ol>
             </AlertDescription>
