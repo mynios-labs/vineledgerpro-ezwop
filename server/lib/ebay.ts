@@ -102,3 +102,51 @@ export async function uploadPictureToEbay(imageUrl: string): Promise<string> {
   // For now, return the URL as-is
   return imageUrl;
 }
+
+export async function getOrders(params: {
+  orderIds?: string[];
+  creationDateFrom?: string;
+  creationDateTo?: string;
+  limit?: number;
+}): Promise<any> {
+  const token = await getAccessToken();
+  
+  const queryParams = new URLSearchParams();
+  if (params.orderIds?.length) {
+    queryParams.append("orderIds", params.orderIds.join(","));
+  }
+  if (params.creationDateFrom) {
+    queryParams.append("filter", `creationdate:[${params.creationDateFrom}..${params.creationDateTo || ""}]`);
+  }
+  if (params.limit) {
+    queryParams.append("limit", params.limit.toString());
+  }
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/fulfillment/v1/order?${queryParams.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return response.json();
+}
+
+export async function getOrder(orderId: string): Promise<any> {
+  const token = await getAccessToken();
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/fulfillment/v1/order/${orderId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return response.json();
+}
