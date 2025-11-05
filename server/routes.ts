@@ -578,6 +578,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Generate unique titles and description using AI
       // Using gpt-4.1-mini for cost efficiency - produces excellent eBay-friendly copy
+      const basisPrice = item.etv || 0;
+      const valueMessage = basisPrice > 0 
+        ? `\n\nVALUE MESSAGING (IMPORTANT):
+- This item typically retails for $${basisPrice.toFixed(2)}
+- Include this value comparison in the description
+- Use phrasing like: "Item normally sells for $${basisPrice.toFixed(2)}, but our price is [their listing price]"
+- This shows the buyer they're getting a great deal
+- DO NOT mention where it originally came from (no Amazon, Vine, etc.)
+- Just state the typical retail price as a fact`
+        : '';
+
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1-mini",
         messages: [
@@ -589,7 +600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             role: "user",
             content: `Transform this product into 3 unique eBay listing titles and 1 enticing description.
 
-Original product: "${item.titleNorm}"
+Original product: "${item.titleNorm}"${valueMessage}
 
 Create 3 DISTINCT titles (max 80 chars each):
 1. Title emphasizing QUALITY/PREMIUM (use synonyms: superior, elite, top-tier, exceptional, finest)
@@ -606,7 +617,7 @@ Create 1 description (4-6 sentences):
 - Open with a benefit statement that solves a buyer problem
 - List 3-4 key features with emotional appeal
 - Include use cases and scenarios
-- End with a call-to-action or confidence statement
+${basisPrice > 0 ? '- Include the value comparison statement about typical retail price vs your price\n' : ''}- End with a call-to-action or confidence statement
 - Make it exciting and persuasive, not just factual
 
 STRICT RULES:
