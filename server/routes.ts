@@ -2070,5 +2070,206 @@ Output only JSON:
   // Run once on startup (after a short delay to allow server to fully start)
   setTimeout(autoSyncOrders, 30000); // 30 seconds after startup
 
+  // Tax Report - Comprehensive annual tax data
+  app.get("/api/tax-report", async (_req, res) => {
+    try {
+      // Get all inventory items with their vine data and accounting ledger
+      const allData = await db
+        .select({
+          inventoryId: inventoryItems.inventoryId,
+          vineItemId: vineItems.vineItemId,
+          title: vineItems.titleNorm,
+          etvCents: vineItems.etvCents,
+          receivedDate: vineItems.receivedDate,
+          defective: vineItems.defective,
+          defectiveNotes: vineItems.defectiveNotes,
+          status: vineItems.status,
+          listingId: listings.listingId,
+          publishedAt: listings.publishedAt,
+          orderId: orders.orderId,
+          orderDate: orders.orderDate,
+          saleGrossCents: orders.saleGrossCents,
+        })
+        .from(inventoryItems)
+        .innerJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+        .leftJoin(listings, eq(listings.inventoryId, inventoryItems.inventoryId))
+        .leftJoin(orders, eq(orders.listingId, listings.listingId));
+
+      // Get all ledger entries
+      const allLedger = await db
+        .select()
+        .from(accountingLedger)
+        .orderBy(asc(accountingLedger.txDate));
+
+      // Group data by year
+      type YearData = {
+        year: number;
+        grossSalesCents: number;
+        basisCents: number;
+        ebayFeesCents: number;
+        promotionFeesCents: number;
+        shippingCostsCents: number;
+        shippingRefundsCents: number;
+        salesTaxCollectedCents: number;
+        itemsSold: number;
+        itemsDefective: number;
+        netTaxableIncomeCents: number;
+      };
+
+      const yearMap = new Map<number, YearData>();
+
+      const getYearData = (year: number): YearData => {
+        if (!yearMap.has(year)) {
+          yearMap.set(year, {
+            year,
+            grossSalesCents: 0,
+            basisCents: 0,
+            ebayFeesCents: 0,
+            promotionFeesCents: 0,
+            shippingCostsCents: 0,
+            shippingRefundsCents: 0,
+            salesTaxCollectedCents: 0,
+            itemsSold: 0,
+            itemsDefective: 0,
+            netTaxableIncomeCents: 0,
+          });
+        }
+        return yearMap.get(year)!;
+      };
+
+      // Process all ledger entries by tax year
+      for (const entry of allLedger) {
+        const year = new Date(entry.txDate).getFullYear();
+        const yearData = getYearData(year);
+
+        switch (entry.eventType) {
+          case "sale":
+            yearData.grossSalesCents += entry.amountCents;
+            yearData.itemsSold++;
+            break;
+          case "basis_add":
+            yearData.basisCents += entry.amountCents;
+            break;
+          case "fee":
+            yearData.ebayFeesCents += entry.amountCents;
+            break;
+          case "promotion_fee":
+            yearData.promotionFeesCents += entry.amountCents;
+            break;
+          case "shipping_label":
+            yearData.shippingCostsCents += entry.amountCents;
+            break;
+          case "label_refund":
+            yearData.shippingRefundsCents += entry.amountCents;
+            break;
+          case "sales_tax_collected_by_marketplace":
+            yearData.salesTaxCollectedCents += entry.amountCents;
+            break;
+        }
+      }
+
+      // Calculate net taxable income for each year
+      for (const yearData of yearMap.values()) {
+        yearData.netTaxableIncomeCents =
+          yearData.grossSalesCents -
+          yearData.basisCents -
+          yearData.ebayFeesCents -
+          yearData.promotionFeesCents -
+          (yearData.shippingCostsCents - yearData.shippingRefundsCents);
+      }
+
+      // Cross-year analysis: items received in one year but sold in another
+      type CrossYearItem = {
+        title: string;
+        receivedYear: number;
+        soldYear: number;
+        basisCents: number;
+        saleCents: number;
+      };
+
+      const crossYearItems: CrossYearItem[] = [];
+
+      for (const item of allData) {
+        if (item.orderDate && item.receivedDate) {
+          const receivedYear = new Date(item.receivedDate).getFullYear();
+          const soldYear = new Date(item.orderDate).getFullYear();
+
+          if (receivedYear !== soldYear) {
+            crossYearItems.push({
+              title: item.title,
+              receivedYear,
+              soldYear,
+              basisCents: item.etvCents,
+              saleCents: item.saleGrossCents,
+            });
+          }
+        }
+      }
+
+      // Current inventory value (unsold items with basis)
+      const unsoldItems = allData.filter(
+        (item) => !item.orderDate && !item.defective && item.status === "available"
+      );
+      
+      const currentInventoryBasisCents = unsoldItems.reduce(
+        (sum, item) => sum + item.etvCents,
+        0
+      );
+
+      // Group unsold items by year received
+      const unsoldByYear = new Map<number, { count: number; basisCents: number }>();
+      for (const item of unsoldItems) {
+        const year = new Date(item.receivedDate).getFullYear();
+        if (!unsoldByYear.has(year)) {
+          unsoldByYear.set(year, { count: 0, basisCents: 0 });
+        }
+        const yearData = unsoldByYear.get(year)!;
+        yearData.count++;
+        yearData.basisCents += item.etvCents;
+      }
+
+      // Count defective items
+      const defectiveItems = allData.filter((item) => item.defective);
+      const defectiveBasisCents = defectiveItems.reduce(
+        (sum, item) => sum + item.etvCents,
+        0
+      );
+
+      // Return comprehensive report
+      res.json({
+        annualSummary: Array.from(yearMap.values()).sort((a, b) => a.year - b.year),
+        crossYearAnalysis: crossYearItems,
+        currentInventory: {
+          totalItemsUnsold: unsoldItems.length,
+          totalBasisCents: currentInventoryBasisCents,
+          byYearReceived: Array.from(unsoldByYear.entries()).map(([year, data]) => ({
+            year,
+            count: data.count,
+            basisCents: data.basisCents,
+          })),
+        },
+        defectiveItems: {
+          count: defectiveItems.length,
+          totalBasisCents: defectiveBasisCents,
+        },
+        taxNotes: {
+          vineProgram:
+            "All items were received for free through Amazon's Vine program. The Estimated Tax Value (ETV) provided by Amazon represents the cost basis for each item.",
+          form1099K:
+            "eBay may issue a Form 1099-K reporting gross payment amounts. This form does NOT account for cost basis (ETV), business expenses (fees, shipping), or sales tax collected by the marketplace. Use this report to calculate actual taxable income.",
+          doubletaxation:
+            "To avoid double taxation, ensure your tax preparer reports the NET taxable income (gross sales minus basis minus expenses), not the gross amount from the 1099-K.",
+          crossYearBasis:
+            "Due to Amazon's 6-month waiting period recommendation, many items received in one year are sold in the following year. The cost basis is deducted in the year of sale, not the year received.",
+          defectiveItems:
+            "Defective items (including returns) are excluded from profit calculations and may qualify for loss deductions or writeoffs.",
+        },
+      });
+    } catch (error: any) {
+      console.error("Error generating tax report:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
