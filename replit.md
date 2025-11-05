@@ -31,12 +31,23 @@ Preferred communication style: Simple, everyday language.
 **Routing:** Wouter for lightweight client-side routing
 
 **Key Pages:**
-- Inventory page with typeahead search for product selection
+- Inventory page with typeahead search, status management, and 4-tab organization
 - Draft listing creation with AI-powered content generation (accessible only from inventory page, not in navigation)
 - Orders page with shipping label purchase
 - Messages & Returns for customer communication
 - Money & Ledger for item-centric financial tracking with lifecycle view, comprehensive stats, and CSV/PDF exports
 - Health dashboard for monitoring policy compliance
+
+**Inventory Page:**
+- **Four status tabs** for organizing items:
+  - Available: Items ready to be listed on eBay
+  - Do Not Sell: Items user doesn't want to sell
+  - Sold/Live: Items that are live on eBay or have been sold (includes reserved, sold, returned, gone statuses)
+  - Personal Use: Items user wants to keep for themselves
+- **Five stat cards** showing item counts across categories
+- **Status management buttons** on each item card for quick status changes
+- **Search and sort** functionality across all tabs
+- **Defective item marking** to exclude from taxable income calculations
 
 **Money & Ledger Page (Item-Centric View):**
 - **Three rows of financial stats:**
