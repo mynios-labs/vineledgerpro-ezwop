@@ -780,30 +780,40 @@ Output only JSON:
 
       const shipmentData = await shipmentResponse.json();
 
-      // Extract UPS rates
+      // Extract UPS Ground rate (cheapest option)
       const rates = shipmentData.rates || [];
-      const upsRates = rates
+      const upsGroundRate = rates
+        .filter((rate: any) => 
+          rate.provider === "UPS" && 
+          rate.servicelevel?.name?.toLowerCase().includes("ground")
+        )
+        .map((rate: any) => parseFloat(rate.amount))
+        .filter((amount: number) => !isNaN(amount) && amount > 0)[0];
+
+      // Fallback to cheapest UPS rate if Ground not found
+      const fallbackUpsRate = rates
         .filter((rate: any) => rate.provider === "UPS")
         .map((rate: any) => parseFloat(rate.amount))
-        .filter((amount: number) => !isNaN(amount) && amount > 0);
+        .filter((amount: number) => !isNaN(amount) && amount > 0)
+        .sort((a, b) => a - b)[0];
 
-      if (upsRates.length === 0) {
+      const baseRate = upsGroundRate || fallbackUpsRate;
+
+      if (!baseRate) {
         // Fallback estimate based on weight
-        const baseRate = weightLb < 1 ? 5.00 : weightLb < 3 ? 9.00 : weightLb < 5 ? 12.00 : 16.00;
-        // Apply 5% cushion to fallback estimates
+        const estimatedRate = weightLb < 1 ? 5.00 : weightLb < 3 ? 9.00 : weightLb < 5 ? 12.00 : 16.00;
+        const withCushion = Math.round(estimatedRate * 1.05 * 100) / 100;
         return res.json({
-          low: Math.round(baseRate * 1.05 * 100) / 100,
-          high: Math.round((baseRate * 1.5) * 1.05 * 100) / 100,
+          low: withCushion,
+          high: withCushion,
         });
       }
 
-      const low = Math.min(...upsRates);
-      const high = Math.max(...upsRates);
-
       // Apply 5% cushion to account for estimate inaccuracy
+      const withCushion = Math.round(baseRate * 1.05 * 100) / 100;
       res.json({
-        low: Math.round(low * 1.05 * 100) / 100,
-        high: Math.round(high * 1.05 * 100) / 100,
+        low: withCushion,
+        high: withCushion,
       });
     } catch (error: any) {
       console.error("Shipping estimate error:", error);
