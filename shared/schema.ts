@@ -173,6 +173,16 @@ export const importConflicts = pgTable("import_conflicts", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Amazon 1099 data table
+export const amazon1099Data = pgTable("amazon_1099_data", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxYear: integer("tax_year").notNull().unique(),
+  amountCents: integer("amount_cents").notNull(),
+  notes: text("notes"),
+  enteredAt: timestamp("entered_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Relations
 export const importsRelations = relations(imports, ({ many }) => ({
   rows: many(importRows),
@@ -243,6 +253,7 @@ export const insertBusinessPolicySchema = createInsertSchema(businessPolicies).o
 export const insertPhotoSetSchema = createInsertSchema(photoSets).omit({ photoSetId: true });
 export const insertHealthEventSchema = createInsertSchema(healthEvents).omit({ id: true, createdAt: true });
 export const insertImportConflictSchema = createInsertSchema(importConflicts).omit({ conflictId: true, createdAt: true });
+export const insertAmazon1099Schema = createInsertSchema(amazon1099Data).omit({ id: true, enteredAt: true, updatedAt: true });
 
 // Types
 export type Import = typeof imports.$inferSelect;
@@ -271,3 +282,5 @@ export type HealthEvent = typeof healthEvents.$inferSelect;
 export type InsertHealthEvent = z.infer<typeof insertHealthEventSchema>;
 export type ImportConflict = typeof importConflicts.$inferSelect;
 export type InsertImportConflict = z.infer<typeof insertImportConflictSchema>;
+export type Amazon1099Data = typeof amazon1099Data.$inferSelect;
+export type InsertAmazon1099 = z.infer<typeof insertAmazon1099Schema>;

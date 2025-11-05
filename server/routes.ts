@@ -20,12 +20,14 @@ import {
   photoSets,
   healthEvents,
   importConflicts,
+  amazon1099Data,
   type InsertImport,
   type InsertImportRow,
   type InsertVineItem,
   type InsertInventoryItem,
   type InsertListing,
   type InsertAccountingLedger,
+  insertAmazon1099Schema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder } from "./lib/ebay";
@@ -2070,6 +2072,70 @@ Output only JSON:
   // Run once on startup (after a short delay to allow server to fully start)
   setTimeout(autoSyncOrders, 30000); // 30 seconds after startup
 
+  // Amazon 1099 CRUD endpoints
+  // Get all Amazon 1099 entries
+  app.get("/api/amazon-1099", async (_req, res) => {
+    try {
+      const data = await db.select().from(amazon1099Data).orderBy(desc(amazon1099Data.taxYear));
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upsert Amazon 1099 entry for a specific year
+  app.post("/api/amazon-1099", async (req, res) => {
+    try {
+      const { taxYear, amountCents, notes } = insertAmazon1099Schema.parse(req.body);
+      
+      // Check if entry exists for this year
+      const [existing] = await db
+        .select()
+        .from(amazon1099Data)
+        .where(eq(amazon1099Data.taxYear, taxYear));
+
+      if (existing) {
+        // Update existing entry
+        const [updated] = await db
+          .update(amazon1099Data)
+          .set({ 
+            amountCents, 
+            notes,
+            updatedAt: new Date(),
+          })
+          .where(eq(amazon1099Data.taxYear, taxYear))
+          .returning();
+        
+        res.json(updated);
+      } else {
+        // Insert new entry
+        const [created] = await db
+          .insert(amazon1099Data)
+          .values({ taxYear, amountCents, notes })
+          .returning();
+        
+        res.json(created);
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Delete Amazon 1099 entry
+  app.delete("/api/amazon-1099/:year", async (req, res) => {
+    try {
+      const year = parseInt(req.params.year);
+      
+      await db
+        .delete(amazon1099Data)
+        .where(eq(amazon1099Data.taxYear, year));
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Tax Report - Comprehensive annual tax data
   app.get("/api/tax-report", async (_req, res) => {
     try {
@@ -2236,6 +2302,22 @@ Output only JSON:
         0
       );
 
+      // Get Amazon 1099 data
+      const amazon1099Entries = await db
+        .select()
+        .from(amazon1099Data)
+        .orderBy(asc(amazon1099Data.taxYear));
+
+      // Calculate ETV received each year from vine items
+      const etvByYearReceived = new Map<number, number>();
+      for (const item of allData) {
+        const year = new Date(item.receivedDate).getFullYear();
+        etvByYearReceived.set(
+          year,
+          (etvByYearReceived.get(year) || 0) + item.etvCents
+        );
+      }
+
       // Return comprehensive report
       res.json({
         annualSummary: Array.from(yearMap.values()).sort((a, b) => a.year - b.year),
@@ -2253,17 +2335,36 @@ Output only JSON:
           count: defectiveItems.length,
           totalBasisCents: defectiveBasisCents,
         },
+        amazon1099: {
+          entries: amazon1099Entries,
+          etvReceivedByYear: Array.from(etvByYearReceived.entries())
+            .map(([year, etv]) => ({
+              year,
+              calculatedEtvCents: etv,
+              reported1099Cents: amazon1099Entries.find((e) => e.taxYear === year)?.amountCents || null,
+              hasDiscrepancy: amazon1099Entries.find((e) => e.taxYear === year)
+                ? Math.abs(etv - (amazon1099Entries.find((e) => e.taxYear === year)?.amountCents || 0)) > 100
+                : false,
+            }))
+            .sort((a, b) => a.year - b.year),
+        },
         taxNotes: {
           vineProgram:
             "All items were received for free through Amazon's Vine program. The Estimated Tax Value (ETV) provided by Amazon represents the cost basis for each item.",
-          form1099K:
-            "eBay may issue a Form 1099-K reporting gross payment amounts. This form does NOT account for cost basis (ETV), business expenses (fees, shipping), or sales tax collected by the marketplace. Use this report to calculate actual taxable income.",
-          doubletaxation:
-            "To avoid double taxation, ensure your tax preparer reports the NET taxable income (gross sales minus basis minus expenses), not the gross amount from the 1099-K.",
+          amazon1099:
+            "Amazon issues a Form 1099-MISC or 1099-NEC each year reporting the total ETV of items you received as TAXABLE INCOME. This is the first layer of taxation. You must report this income in the year you receive the items, NOT when you sell them.",
+          ebay1099K:
+            "eBay may issue a Form 1099-K reporting gross payment amounts when you sell items. This form does NOT account for cost basis (ETV), business expenses (fees, shipping), or sales tax collected by the marketplace.",
+          doubleTaxationRisk:
+            "CRITICAL: Without proper accounting, you will be taxed TWICE - once on the ETV when received (Amazon 1099) and again on the full sale price (eBay 1099-K). To avoid this, your tax preparer MUST deduct the ETV as cost basis when reporting eBay sales.",
+          properTreatment:
+            "Year received: Report Amazon 1099 amount as income. Year sold: Report eBay gross sales, then deduct ETV as cost basis along with all business expenses (fees, shipping). Net taxable income = Sale Price - ETV - Expenses.",
           crossYearBasis:
-            "Due to Amazon's 6-month waiting period recommendation, many items received in one year are sold in the following year. The cost basis is deducted in the year of sale, not the year received.",
+            "Due to Amazon's 6-month waiting period recommendation, many items received in one year are sold in the following year. The ETV is reported as income in the year received (per Amazon 1099), but is deducted as cost basis in the year of sale.",
+          reconciliation:
+            "Compare your calculated ETV by year with Amazon's 1099 amounts. Small discrepancies may occur due to timing differences, but large differences should be investigated. Provide both this report and your Amazon 1099 forms to your tax preparer.",
           defectiveItems:
-            "Defective items (including returns) are excluded from profit calculations and may qualify for loss deductions or writeoffs.",
+            "Defective items (including returns) that cannot be sold may qualify for loss deductions. The ETV was already reported as income when received, so the loss deduction helps offset that income.",
         },
       });
     } catch (error: any) {
