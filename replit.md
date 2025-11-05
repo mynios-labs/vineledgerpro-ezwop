@@ -71,12 +71,25 @@ Preferred communication style: Simple, everyday language.
   - Highlight discrepancies between reported vs calculated values
   - User can manually input Amazon 1099 amounts received at year-end
   - Comprehensive tax notes explaining double taxation risk and proper treatment
+- **eBay 1099-K Reconciliation:** Track eBay marketplace tax reporting
+  - Track eBay 1099-K forms by year (gross payment processor reporting)
+  - Compare eBay's reported 1099-K amounts with calculated gross sales from orders
+  - Highlight discrepancies between reported vs calculated values
+  - User can manually input eBay 1099-K amounts received at year-end
+  - Integrated guidance on deducting cost basis and expenses from gross sales
+- **Print Report Validation:** Smart validation before printing
+  - Checks if tax year is complete (prevents printing incomplete year reports)
+  - Validates Amazon 1099 entries are present for all years with ETV
+  - Validates eBay 1099-K entries are present for all years with sales
+  - User-friendly alerts specify exactly what data is missing
+  - Only allows printing when all required data is complete
 - **Annual Tax Summary:** Year-by-year breakdown of sales, expenses, and net taxable income
 - **Cross-Year Analysis:** Items received in one year but sold in another (due to 6-month waiting period)
 - **Current Inventory Tracking:** Unsold items by year received with basis value
 - **API Endpoints:**
-  - `/api/tax-report` - Comprehensive annual tax data with Amazon 1099 reconciliation
+  - `/api/tax-report` - Comprehensive annual tax data with Amazon & eBay 1099 reconciliation
   - `/api/amazon-1099` - CRUD operations for Amazon 1099 entry management
+  - `/api/ebay-1099` - CRUD operations for eBay 1099-K entry management
   - `/api/accounting/export/csv` - Full ledger export for CPA review
 
 **Draft Listing Workflow:**
@@ -121,8 +134,13 @@ Preferred communication style: Simple, everyday language.
    - **Unique Constraint:** Composite key on (userId, taxYear) prevents duplicate entries per user
    - **Reconciliation:** Compares reported 1099 amounts with calculated ETV to detect discrepancies
    - **Double Taxation Prevention:** Ensures proper cost basis deduction when items are sold
-6. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
-7. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
+6. **eBay 1099-K Tracking:** `ebay_1099_data` - Stores eBay 1099-K amounts by year for marketplace sales reconciliation
+   - **User Scoping:** Multi-tenant ready with userId field (currently defaults to "default" for single-user deployment)
+   - **Unique Constraint:** Composite key on (userId, taxYear) prevents duplicate entries per user
+   - **Reconciliation:** Compares reported 1099-K gross proceeds with calculated sales to detect discrepancies
+   - **Tax Reporting:** Validates gross sales match eBay's reporting before allowing tax report finalization
+7. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
+8. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
 
 **Key Design Decisions:**
 - Unique constraint on `vine_items` using composite key (ASIN + received_date + ETV + serial) to prevent duplicate inventory
