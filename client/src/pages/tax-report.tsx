@@ -320,12 +320,70 @@ export default function TaxReport() {
   const { data: report, isLoading } = useQuery<TaxReport>({
     queryKey: ["/api/tax-report"],
   });
+  const { toast } = useToast();
 
   const currentYear = new Date().getFullYear();
   const currentYearData = report?.annualSummary.find((y) => y.year === currentYear);
 
   const formatCurrency = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`;
+  };
+
+  const validateAndPrint = () => {
+    if (!report) return;
+
+    const missingItems: string[] = [];
+
+    // Check if current year is complete (tax year has ended)
+    const today = new Date();
+    const isCurrentYearComplete = today.getMonth() >= 0 && today.getFullYear() > currentYear;
+    
+    if (!isCurrentYearComplete && (currentYearData?.grossSalesCents || 0) > 0) {
+      missingItems.push(`Tax year ${currentYear} is not yet complete. Wait until year-end to finalize your report.`);
+    }
+
+    // Check for missing Amazon 1099 entries for years with ETV
+    const yearsWithETV = report.amazon1099.etvReceivedByYear.filter(y => y.calculatedEtvCents > 0);
+    const missingAmazon1099Years = yearsWithETV
+      .filter(y => !y.reported1099Cents && y.year < currentYear)
+      .map(y => y.year);
+    
+    if (missingAmazon1099Years.length > 0) {
+      missingItems.push(`Amazon 1099 not entered for year(s): ${missingAmazon1099Years.join(', ')}`);
+    }
+
+    // Check for missing eBay 1099-K entries for years with sales
+    const yearsWithSales = report.ebay1099.salesByYear.filter(y => y.calculatedGrossSalesCents > 0);
+    const missingEbay1099Years = yearsWithSales
+      .filter(y => !y.reported1099KCents && y.year < currentYear)
+      .map(y => y.year);
+    
+    if (missingEbay1099Years.length > 0) {
+      missingItems.push(`eBay 1099-K not entered for year(s): ${missingEbay1099Years.join(', ')}`);
+    }
+
+    // If there are missing items, show an alert
+    if (missingItems.length > 0) {
+      toast({
+        title: "Cannot Print Report - Missing Data",
+        description: (
+          <div className="space-y-2">
+            <p className="font-medium">Please complete the following before printing:</p>
+            <ul className="list-disc list-inside space-y-1">
+              {missingItems.map((item, index) => (
+                <li key={index} className="text-sm">{item}</li>
+              ))}
+            </ul>
+          </div>
+        ),
+        variant: "destructive",
+        duration: 10000,
+      });
+      return;
+    }
+
+    // If validation passes, trigger print
+    window.print();
   };
 
   if (isLoading) {
@@ -377,7 +435,7 @@ export default function TaxReport() {
               Export CSV
             </a>
           </Button>
-          <Button variant="outline" size="sm" data-testid="button-print">
+          <Button variant="outline" size="sm" data-testid="button-print" onClick={validateAndPrint}>
             <FileText className="w-4 h-4 mr-2" />
             Print Report
           </Button>
