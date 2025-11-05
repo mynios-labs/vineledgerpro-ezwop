@@ -187,6 +187,20 @@ export const amazon1099Data = pgTable("amazon_1099_data", {
   userYearUnique: unique().on(table.userId, table.taxYear),
 }));
 
+// eBay 1099-K data table
+export const ebay1099Data = pgTable("ebay_1099_data", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().default("default"),
+  taxYear: integer("tax_year").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  notes: text("notes"),
+  enteredAt: timestamp("entered_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  // Unique constraint per user per year (allows multi-tenancy)
+  userYearUnique: unique().on(table.userId, table.taxYear),
+}));
+
 // Relations
 export const importsRelations = relations(imports, ({ many }) => ({
   rows: many(importRows),
@@ -258,6 +272,7 @@ export const insertPhotoSetSchema = createInsertSchema(photoSets).omit({ photoSe
 export const insertHealthEventSchema = createInsertSchema(healthEvents).omit({ id: true, createdAt: true });
 export const insertImportConflictSchema = createInsertSchema(importConflicts).omit({ conflictId: true, createdAt: true });
 export const insertAmazon1099Schema = createInsertSchema(amazon1099Data).omit({ id: true, userId: true, enteredAt: true, updatedAt: true });
+export const insertEbay1099Schema = createInsertSchema(ebay1099Data).omit({ id: true, userId: true, enteredAt: true, updatedAt: true });
 
 // Types
 export type Import = typeof imports.$inferSelect;
@@ -288,3 +303,5 @@ export type ImportConflict = typeof importConflicts.$inferSelect;
 export type InsertImportConflict = z.infer<typeof insertImportConflictSchema>;
 export type Amazon1099Data = typeof amazon1099Data.$inferSelect;
 export type InsertAmazon1099 = z.infer<typeof insertAmazon1099Schema>;
+export type Ebay1099Data = typeof ebay1099Data.$inferSelect;
+export type InsertEbay1099 = z.infer<typeof insertEbay1099Schema>;
