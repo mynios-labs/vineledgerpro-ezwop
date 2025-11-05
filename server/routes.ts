@@ -795,7 +795,7 @@ Output only JSON:
         .filter((rate: any) => rate.provider === "UPS")
         .map((rate: any) => parseFloat(rate.amount))
         .filter((amount: number) => !isNaN(amount) && amount > 0)
-        .sort((a, b) => a - b)[0];
+        .sort((a: number, b: number) => a - b)[0];
 
       const baseRate = upsGroundRate || fallbackUpsRate;
 
@@ -899,15 +899,12 @@ Output only JSON:
         },
       });
 
+      // Note: listingPolicies are omitted - eBay will use the account's default business policies
+      // To use specific policies, they must first be created in your eBay account and stored in business_policies table
       const offer = await createOffer({
         sku,
         marketplaceId: "EBAY_US",
         format: "FIXED_PRICE",
-        listingPolicies: {
-          fulfillmentPolicyId: "default",
-          paymentPolicyId: "default",
-          returnPolicyId: "default",
-        },
         pricingSummary: {
           price: {
             value: (parseInt(priceCents) / 100).toFixed(2),
