@@ -1015,6 +1015,65 @@ Output only JSON:
     }
   });
 
+  // Return item to inventory (cancel order/listing)
+  app.post("/api/inventory/:inventoryId/return", async (req, res) => {
+    try {
+      const { inventoryId } = req.params;
+      const { reason } = req.body;
+
+      // Get inventory item and related data
+      const [inventoryItem] = await db
+        .select()
+        .from(inventoryItems)
+        .where(eq(inventoryItems.inventoryId, inventoryId));
+
+      if (!inventoryItem) {
+        return res.status(404).json({ error: "Inventory item not found" });
+      }
+
+      // Get listing if exists
+      const [listing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.inventoryId, inventoryId));
+
+      // Get order if exists
+      let order = null;
+      if (listing) {
+        [order] = await db
+          .select()
+          .from(orders)
+          .where(eq(orders.listingId, listing.listingId));
+      }
+
+      // Update vine item status back to available
+      await db
+        .update(vineItems)
+        .set({ status: "available" })
+        .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
+
+      // If there was a listing, mark it as cancelled
+      if (listing) {
+        await db
+          .update(listings)
+          .set({ state: "cancelled" })
+          .where(eq(listings.listingId, listing.listingId));
+      }
+
+      // If there was an order, cancel it
+      if (order) {
+        await db
+          .update(orders)
+          .set({ status: "cancelled" })
+          .where(eq(orders.orderId, order.orderId));
+      }
+
+      res.json({ success: true, message: `Item returned to inventory: ${reason || "No reason provided"}` });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Sync orders from eBay and create ledger entries
   app.post("/api/orders/sync", async (req, res) => {
     try {
@@ -1463,6 +1522,18 @@ Output only JSON:
       const realizedGain = Math.max(0, totalSales - totalBasis - totalFees - totalShipping);
       const realizedLoss = Math.max(0, totalBasis + totalFees + totalShipping - totalSales);
 
+      // Get additional metrics
+      const [statsResult] = await db.select({
+        totalListings: sql<number>`count(distinct ${listings.listingId})::int`,
+        activeListings: sql<number>`count(distinct case when ${listings.state} = 'live' then ${listings.listingId} end)::int`,
+        totalOrders: sql<number>`count(distinct ${orders.orderId})::int`,
+        pendingShipments: sql<number>`count(distinct case when ${orders.status} = 'paid' then ${orders.orderId} end)::int`,
+      }).from(listings).leftJoin(orders, eq(listings.listingId, orders.listingId));
+
+      const [defectiveCount] = await db.select({
+        count: sql<number>`count(*)::int`,
+      }).from(vineItems).where(eq(vineItems.defective, true));
+
       res.json({
         totalSales,
         totalFees,
@@ -1470,6 +1541,11 @@ Output only JSON:
         totalPayout,
         realizedGain,
         realizedLoss,
+        totalListings: statsResult?.totalListings || 0,
+        activeListings: statsResult?.activeListings || 0,
+        totalOrders: statsResult?.totalOrders || 0,
+        pendingShipments: statsResult?.pendingShipments || 0,
+        defectiveItems: defectiveCount?.count || 0,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1499,6 +1575,111 @@ Output only JSON:
         .limit(100);
 
       res.json(entries);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get item-centric financial view
+  app.get("/api/accounting/items", async (_req, res) => {
+    try {
+      // Get all inventory items with their related data
+      const items = await db
+        .select({
+          inventoryId: inventoryItems.inventoryId,
+          vineItemId: vineItems.vineItemId,
+          title: vineItems.titleNorm,
+          asin: vineItems.asin,
+          etvCents: vineItems.etvCents,
+          receivedDate: vineItems.receivedDate,
+          defective: vineItems.defective,
+          defectiveNotes: vineItems.defectiveNotes,
+          status: vineItems.status,
+          listingId: listings.listingId,
+          publishedAt: listings.publishedAt,
+          priceCents: listings.priceCents,
+          orderId: orders.orderId,
+          orderDate: orders.orderDate,
+          shipBy: orders.shipBy,
+          saleGrossCents: orders.saleGrossCents,
+          shippingCollectedCents: orders.shippingCollectedCents,
+          ebayFeesCents: orders.ebayFeesCents,
+          orderStatus: orders.status,
+          tracking: orders.tracking,
+          shippedAt: orders.shippedAt,
+        })
+        .from(inventoryItems)
+        .leftJoin(vineItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+        .leftJoin(listings, eq(inventoryItems.inventoryId, listings.inventoryId))
+        .leftJoin(orders, eq(listings.listingId, orders.listingId))
+        .orderBy(desc(vineItems.receivedDate));
+
+      // Get all ledger entries to calculate totals per item
+      const allLedger = await db
+        .select()
+        .from(accountingLedger);
+
+      // Build item-centric view
+      const itemView = items.map((item) => {
+        // Get all ledger entries for this inventory item
+        const itemLedger = allLedger.filter(
+          (entry) => entry.inventoryId === item.inventoryId
+        );
+
+        let basisCents = 0;
+        let saleCents = 0;
+        let feesCents = 0;
+        let shippingCostsCents = 0;
+        let shippingRefundsCents = 0;
+
+        itemLedger.forEach((entry) => {
+          switch (entry.eventType) {
+            case "basis_add":
+              basisCents += entry.amountCents;
+              break;
+            case "sale":
+              saleCents += entry.amountCents;
+              break;
+            case "fee":
+            case "promotion_fee":
+              feesCents += entry.amountCents;
+              break;
+            case "shipping_label":
+              shippingCostsCents += entry.amountCents;
+              break;
+            case "label_refund":
+              shippingRefundsCents += entry.amountCents;
+              break;
+          }
+        });
+
+        const netShippingCosts = shippingCostsCents - shippingRefundsCents;
+        const netProfit = saleCents - basisCents - feesCents - netShippingCosts;
+
+        return {
+          inventoryId: item.inventoryId,
+          title: item.title,
+          asin: item.asin,
+          status: item.status,
+          receivedDate: item.receivedDate,
+          publishedAt: item.publishedAt,
+          orderDate: item.orderDate,
+          shippedAt: item.shippedAt,
+          orderStatus: item.orderStatus,
+          basisCents,
+          listPriceCents: item.priceCents || 0,
+          saleCents,
+          feesCents,
+          shippingCostsCents: netShippingCosts,
+          netProfitCents: netProfit,
+          defective: item.defective,
+          defectiveNotes: item.defectiveNotes,
+          tracking: item.tracking,
+          orderId: item.orderId,
+        };
+      });
+
+      res.json(itemView);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
