@@ -2073,10 +2073,19 @@ Output only JSON:
   setTimeout(autoSyncOrders, 30000); // 30 seconds after startup
 
   // Amazon 1099 CRUD endpoints
-  // Get all Amazon 1099 entries
+  // Get all Amazon 1099 entries for the current user
   app.get("/api/amazon-1099", async (_req, res) => {
     try {
-      const data = await db.select().from(amazon1099Data).orderBy(desc(amazon1099Data.taxYear));
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
+      const data = await db
+        .select()
+        .from(amazon1099Data)
+        .where(eq(amazon1099Data.userId, userId))
+        .orderBy(desc(amazon1099Data.taxYear));
+      
       res.json(data);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2088,11 +2097,20 @@ Output only JSON:
     try {
       const { taxYear, amountCents, notes } = insertAmazon1099Schema.parse(req.body);
       
-      // Check if entry exists for this year
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
+      // Check if entry exists for this user and year
       const [existing] = await db
         .select()
         .from(amazon1099Data)
-        .where(eq(amazon1099Data.taxYear, taxYear));
+        .where(
+          and(
+            eq(amazon1099Data.userId, userId),
+            eq(amazon1099Data.taxYear, taxYear)
+          )
+        );
 
       if (existing) {
         // Update existing entry
@@ -2103,7 +2121,12 @@ Output only JSON:
             notes,
             updatedAt: new Date(),
           })
-          .where(eq(amazon1099Data.taxYear, taxYear))
+          .where(
+            and(
+              eq(amazon1099Data.userId, userId),
+              eq(amazon1099Data.taxYear, taxYear)
+            )
+          )
           .returning();
         
         res.json(updated);
@@ -2111,7 +2134,7 @@ Output only JSON:
         // Insert new entry
         const [created] = await db
           .insert(amazon1099Data)
-          .values({ taxYear, amountCents, notes })
+          .values({ userId, taxYear, amountCents, notes })
           .returning();
         
         res.json(created);
@@ -2126,9 +2149,18 @@ Output only JSON:
     try {
       const year = parseInt(req.params.year);
       
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
       await db
         .delete(amazon1099Data)
-        .where(eq(amazon1099Data.taxYear, year));
+        .where(
+          and(
+            eq(amazon1099Data.userId, userId),
+            eq(amazon1099Data.taxYear, year)
+          )
+        );
       
       res.json({ success: true });
     } catch (error: any) {
@@ -2302,10 +2334,15 @@ Output only JSON:
         0
       );
 
-      // Get Amazon 1099 data
+      // Get Amazon 1099 data for the current user
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
       const amazon1099Entries = await db
         .select()
         .from(amazon1099Data)
+        .where(eq(amazon1099Data.userId, userId))
         .orderBy(asc(amazon1099Data.taxYear));
 
       // Calculate ETV received each year from vine items
