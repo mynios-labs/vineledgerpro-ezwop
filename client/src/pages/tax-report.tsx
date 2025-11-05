@@ -1,11 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertTriangle, Download, FileText, Info } from "lucide-react";
+import { AlertTriangle, Download, FileText, Info, Plus, Edit2, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { useState } from "react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type YearData = {
   year: number;
@@ -29,6 +36,15 @@ type CrossYearItem = {
   saleCents: number;
 };
 
+type Amazon1099Entry = {
+  id: number;
+  taxYear: number;
+  amountCents: number;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type TaxReport = {
   annualSummary: YearData[];
   crossYearAnalysis: CrossYearItem[];
@@ -45,14 +61,134 @@ type TaxReport = {
     count: number;
     totalBasisCents: number;
   };
+  amazon1099: {
+    entries: Amazon1099Entry[];
+    etvReceivedByYear: Array<{
+      year: number;
+      calculatedEtvCents: number;
+      reported1099Cents: number | null;
+      hasDiscrepancy: boolean;
+    }>;
+  };
   taxNotes: {
     vineProgram: string;
-    form1099K: string;
-    doubletaxation: string;
+    amazon1099: string;
+    ebay1099K: string;
+    doubleTaxationRisk: string;
+    properTreatment: string;
     crossYearBasis: string;
+    reconciliation: string;
     defectiveItems: string;
   };
 };
+
+function Amazon1099Dialog({
+  year,
+  existingAmount,
+  existingNotes,
+}: {
+  year: number;
+  existingAmount?: number;
+  existingNotes?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(existingAmount ? (existingAmount / 100).toFixed(2) : "");
+  const [notes, setNotes] = useState(existingNotes || "");
+  const { toast } = useToast();
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const amountCents = Math.round(parseFloat(amount) * 100);
+      return apiRequest("/api/amazon-1099", "POST", {
+        taxYear: year,
+        amountCents,
+        notes: notes.trim() || null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tax-report"] });
+      toast({
+        title: "Amazon 1099 saved",
+        description: `Successfully saved ${year} Amazon 1099 data`,
+      });
+      setOpen(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error saving data",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid={`button-edit-1099-${year}`}
+        >
+          {existingAmount ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          <span className="ml-2">{existingAmount ? "Edit" : "Add"} {year}</span>
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Amazon 1099 for {year}</DialogTitle>
+          <DialogDescription>
+            Enter the total amount from your Amazon Vine 1099-MISC or 1099-NEC for tax year {year}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="amount">Amount from 1099</Label>
+            <Input
+              id="amount"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              data-testid="input-1099-amount"
+            />
+            <p className="text-sm text-muted-foreground">
+              Enter the total ETV amount from your Amazon 1099 form
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notes (Optional)</Label>
+            <Textarea
+              id="notes"
+              placeholder="Any notes about this tax year..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              data-testid="input-1099-notes"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            data-testid="button-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!amount || saveMutation.isPending}
+            data-testid="button-save-1099"
+          >
+            {saveMutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function TaxReport() {
   const { data: report, isLoading } = useQuery<TaxReport>({
@@ -125,17 +261,164 @@ export default function TaxReport() {
       {/* Critical Tax Notes */}
       <Alert>
         <Info className="h-4 w-4" />
-        <AlertDescription className="space-y-2">
-          <p className="font-semibold">Important Information for Tax Preparer:</p>
-          <ul className="list-disc list-inside space-y-1 text-sm">
-            <li>{report.taxNotes.vineProgram}</li>
-            <li className="text-destructive font-medium">{report.taxNotes.form1099K}</li>
-            <li className="text-destructive font-medium">{report.taxNotes.doubletaxation}</li>
-            <li>{report.taxNotes.crossYearBasis}</li>
-            <li>{report.taxNotes.defectiveItems}</li>
-          </ul>
+        <AlertDescription className="space-y-3">
+          <p className="font-semibold text-base">Critical Tax Information - READ CAREFULLY:</p>
+          <div className="space-y-2">
+            <div>
+              <p className="font-medium text-sm">Vine Program Basics:</p>
+              <p className="text-sm">{report.taxNotes.vineProgram}</p>
+            </div>
+            <div className="border-l-4 border-destructive pl-3">
+              <p className="font-medium text-sm text-destructive">Amazon 1099 (First Taxation):</p>
+              <p className="text-sm">{report.taxNotes.amazon1099}</p>
+            </div>
+            <div className="border-l-4 border-destructive pl-3">
+              <p className="font-medium text-sm text-destructive">eBay 1099-K (Second Taxation Risk):</p>
+              <p className="text-sm">{report.taxNotes.ebay1099K}</p>
+            </div>
+            <div className="bg-destructive/10 p-3 rounded-md">
+              <p className="font-semibold text-sm text-destructive uppercase">Double Taxation Risk:</p>
+              <p className="text-sm font-medium">{report.taxNotes.doubleTaxationRisk}</p>
+            </div>
+            <div className="bg-primary/10 p-3 rounded-md">
+              <p className="font-medium text-sm">Proper Tax Treatment:</p>
+              <p className="text-sm">{report.taxNotes.properTreatment}</p>
+            </div>
+            <div>
+              <p className="font-medium text-sm">Cross-Year Basis:</p>
+              <p className="text-sm">{report.taxNotes.crossYearBasis}</p>
+            </div>
+            <div>
+              <p className="font-medium text-sm">Reconciliation:</p>
+              <p className="text-sm">{report.taxNotes.reconciliation}</p>
+            </div>
+            <div>
+              <p className="font-medium text-sm">Defective Items:</p>
+              <p className="text-sm">{report.taxNotes.defectiveItems}</p>
+            </div>
+          </div>
         </AlertDescription>
       </Alert>
+
+      {/* Amazon 1099 Reconciliation */}
+      <Card className="border-destructive">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            Amazon 1099 Reconciliation
+          </CardTitle>
+          <CardDescription>
+            Track Amazon Vine 1099-MISC/NEC forms and reconcile with calculated ETV to prevent double taxation
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tax Year</TableHead>
+                  <TableHead className="text-right">Calculated ETV</TableHead>
+                  <TableHead className="text-right">Amazon 1099 Amount</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.amazon1099.etvReceivedByYear.map((yearData) => {
+                  const existing1099 = report.amazon1099.entries.find(
+                    (e) => e.taxYear === yearData.year
+                  );
+                  const variance = yearData.reported1099Cents
+                    ? yearData.calculatedEtvCents - yearData.reported1099Cents
+                    : null;
+
+                  return (
+                    <TableRow
+                      key={yearData.year}
+                      data-testid={`row-1099-${yearData.year}`}
+                      className={yearData.hasDiscrepancy ? "bg-destructive/5" : ""}
+                    >
+                      <TableCell className="font-medium">
+                        {yearData.year}
+                        {yearData.hasDiscrepancy && (
+                          <Badge variant="destructive" className="ml-2">
+                            Discrepancy
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(yearData.calculatedEtvCents)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {yearData.reported1099Cents ? (
+                          formatCurrency(yearData.reported1099Cents)
+                        ) : (
+                          <span className="text-muted-foreground">Not entered</span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-mono ${
+                          variance && Math.abs(variance) > 100
+                            ? "text-destructive font-semibold"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {variance !== null ? (
+                          <>
+                            {variance > 0 ? "+" : ""}
+                            {formatCurrency(variance)}
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Amazon1099Dialog
+                          year={yearData.year}
+                          existingAmount={existing1099?.amountCents}
+                          existingNotes={existing1099?.notes || undefined}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {report.amazon1099.etvReceivedByYear.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No Vine items received yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription className="text-sm">
+              <p className="font-medium mb-1">How to use this section:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>
+                  "Calculated ETV" shows the total ETV of Vine items you received each year (from
+                  your imports)
+                </li>
+                <li>
+                  When you receive your Amazon 1099 form at year-end, click "Add" to enter the
+                  reported amount
+                </li>
+                <li>
+                  Compare the two values - small differences are normal due to timing, but large
+                  discrepancies should be investigated
+                </li>
+                <li>
+                  Provide both this report AND your Amazon 1099 forms to your CPA to ensure proper
+                  cost basis deductions
+                </li>
+              </ol>
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
 
       {/* Current Year Tax Liability */}
       {currentYearData && (
