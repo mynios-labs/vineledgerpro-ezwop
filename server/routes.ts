@@ -1035,151 +1035,159 @@ Output only JSON:
       let updatedCount = 0;
 
       for (const ebayOrder of ebayResponse.orders) {
-        // Check if order already exists
-        const [existingOrder] = await db
-          .select()
-          .from(orders)
-          .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+        try {
+          // Wrap each order sync in a transaction for atomicity
+          await db.transaction(async (tx) => {
+            // Check if order already exists
+            const [existingOrder] = await tx
+              .select()
+              .from(orders)
+              .where(eq(orders.ebayOrderId, ebayOrder.orderId));
 
-        if (existingOrder) {
-          updatedCount++;
-          continue; // Skip if already synced
-        }
+            if (existingOrder) {
+              updatedCount++;
+              return; // Skip if already synced
+            }
 
-        // Find the listing by eBay item ID
-        const lineItem = ebayOrder.lineItems?.[0];
-        if (!lineItem) continue;
+            // Find the listing by eBay item ID
+            const lineItem = ebayOrder.lineItems?.[0];
+            if (!lineItem) return;
 
-        const [listing] = await db
-          .select()
-          .from(listings)
-          .where(eq(listings.ebayItemId, lineItem.lineItemId));
+            const [listing] = await tx
+              .select()
+              .from(listings)
+              .where(eq(listings.ebayItemId, lineItem.lineItemId));
 
-        if (!listing) {
-          console.warn(`Listing not found for eBay item ${lineItem.lineItemId}`);
-          continue;
-        }
+            if (!listing) {
+              console.warn(`Listing not found for eBay item ${lineItem.lineItemId}`);
+              return;
+            }
 
-        // Get or create buyer
-        const buyerUsername = ebayOrder.buyer?.username || "unknown";
-        let [buyer] = await db
-          .select()
-          .from(buyers)
-          .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+            // Get or create buyer
+            const buyerUsername = ebayOrder.buyer?.username || "unknown";
+            let [buyer] = await tx
+              .select()
+              .from(buyers)
+              .where(eq(buyers.ebayBuyerUsername, buyerUsername));
 
-        if (!buyer) {
-          [buyer] = await db
-            .insert(buyers)
-            .values({
-              ebayBuyerUsername: buyerUsername,
-              emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
-            })
-            .returning();
-        }
+            if (!buyer) {
+              [buyer] = await tx
+                .insert(buyers)
+                .values({
+                  ebayBuyerUsername: buyerUsername,
+                  emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                })
+                .returning();
+            }
 
-        // Parse eBay order amounts
-        const saleGrossCents = Math.round(
-          parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
-        );
-        const shippingCollectedCents = Math.round(
-          parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
-        );
+            // Parse eBay order amounts
+            const saleGrossCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+            );
+            const shippingCollectedCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
+            );
 
-        // eBay fees (final value fee + promotion fee)
-        // Note: eBay provides detailed fee breakdown in the transaction response
-        // For now, we'll estimate at 13.25% (typical eBay final value fee)
-        const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
-        const promotionFee = 0; // Would come from eBay transaction details
+            // eBay fees (final value fee + promotion fee)
+            // Note: eBay provides detailed fee breakdown in the transaction response
+            // For now, we'll estimate at 13.25% (typical eBay final value fee)
+            const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+            const promotionFee = 0; // Would come from eBay transaction details
 
-        // Create order
-        const [newOrder] = await db
-          .insert(orders)
-          .values({
-            ebayOrderId: ebayOrder.orderId,
-            listingId: listing.listingId,
-            buyerId: buyer.buyerId,
-            saleGrossCents,
-            shippingCollectedCents,
-            ebayFeesCents: ebayFinalValueFee + promotionFee,
-            payoutCents: 0, // Updated when payout occurs
-            orderDate: new Date(ebayOrder.creationDate),
-            shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
-              ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
-              : null,
-            status: "paid",
-          })
-          .returning();
+            // Create order
+            const [newOrder] = await tx
+              .insert(orders)
+              .values({
+                ebayOrderId: ebayOrder.orderId,
+                listingId: listing.listingId,
+                buyerId: buyer.buyerId,
+                saleGrossCents,
+                shippingCollectedCents,
+                ebayFeesCents: ebayFinalValueFee + promotionFee,
+                payoutCents: 0, // Updated when payout occurs
+                orderDate: new Date(ebayOrder.creationDate),
+                shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
+                  ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
+                  : null,
+                status: "paid",
+              })
+              .returning();
 
-        // Get inventory item for ledger tracking
-        const [inventoryItem] = await db
-          .select()
-          .from(inventoryItems)
-          .where(eq(inventoryItems.inventoryId, listing.inventoryId));
+            // Get inventory item for ledger tracking
+            const [inventoryItem] = await tx
+              .select()
+              .from(inventoryItems)
+              .where(eq(inventoryItems.inventoryId, listing.inventoryId));
 
-        // Create ledger entries for this order
-        const ledgerEntries: InsertAccountingLedger[] = [];
+            // Create ledger entries for this order
+            const ledgerEntries: InsertAccountingLedger[] = [];
 
-        // 1. Sale entry (credit - revenue)
-        ledgerEntries.push({
-          inventoryId: listing.inventoryId,
-          orderId: newOrder.orderId,
-          eventType: "sale",
-          amountCents: saleGrossCents,
-          direction: "credit",
-          note: `Sale: ${listing.title}`,
-        });
+            // 1. Sale entry (credit - revenue)
+            ledgerEntries.push({
+              inventoryId: listing.inventoryId,
+              orderId: newOrder.orderId,
+              eventType: "sale",
+              amountCents: saleGrossCents,
+              direction: "credit",
+              note: `Sale: ${listing.title}`,
+            });
 
-        // 2. eBay final value fee (debit - expense)
-        if (ebayFinalValueFee > 0) {
-          ledgerEntries.push({
-            inventoryId: listing.inventoryId,
-            orderId: newOrder.orderId,
-            eventType: "fee",
-            amountCents: ebayFinalValueFee,
-            direction: "debit",
-            note: "eBay final value fee",
+            // 2. eBay final value fee (debit - expense)
+            if (ebayFinalValueFee > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "fee",
+                amountCents: ebayFinalValueFee,
+                direction: "debit",
+                note: "eBay final value fee",
+              });
+            }
+
+            // 3. Promotion fee if applicable (debit - expense)
+            if (promotionFee > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "promotion_fee",
+                amountCents: promotionFee,
+                direction: "debit",
+                note: "eBay promotion fee",
+              });
+            }
+
+            // 4. Sales tax collected by marketplace (tracked separately for tax reporting)
+            const salesTaxCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.tax?.value || "0") * 100
+            );
+            if (salesTaxCents > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "sales_tax_collected_by_marketplace",
+                amountCents: salesTaxCents,
+                direction: "credit",
+                note: "Sales tax collected by eBay (not taxable income)",
+              });
+            }
+
+            // Insert all ledger entries
+            await tx.insert(accountingLedger).values(ledgerEntries);
+
+            // Update vine item status to sold
+            if (inventoryItem) {
+              await tx
+                .update(vineItems)
+                .set({ status: "sold" })
+                .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
+            }
+
+            syncedCount++;
           });
+        } catch (error: any) {
+          console.error(`Failed to sync order ${ebayOrder.orderId}:`, error);
+          // Continue with next order instead of failing the entire sync
         }
-
-        // 3. Promotion fee if applicable (debit - expense)
-        if (promotionFee > 0) {
-          ledgerEntries.push({
-            inventoryId: listing.inventoryId,
-            orderId: newOrder.orderId,
-            eventType: "promotion_fee",
-            amountCents: promotionFee,
-            direction: "debit",
-            note: "eBay promotion fee",
-          });
-        }
-
-        // 4. Sales tax collected by marketplace (tracked separately for tax reporting)
-        const salesTaxCents = Math.round(
-          parseFloat(ebayOrder.pricingSummary?.tax?.value || "0") * 100
-        );
-        if (salesTaxCents > 0) {
-          ledgerEntries.push({
-            inventoryId: listing.inventoryId,
-            orderId: newOrder.orderId,
-            eventType: "sales_tax_collected_by_marketplace",
-            amountCents: salesTaxCents,
-            direction: "credit",
-            note: "Sales tax collected by eBay (not taxable income)",
-          });
-        }
-
-        // Insert all ledger entries
-        await db.insert(accountingLedger).values(ledgerEntries);
-
-        // Update vine item status to sold
-        if (inventoryItem) {
-          await db
-            .update(vineItems)
-            .set({ status: "sold" })
-            .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
-        }
-
-        syncedCount++;
       }
 
       res.json({ 
@@ -1240,23 +1248,26 @@ Output only JSON:
       const labelUrl = transaction.label_url;
       const shippingCostCents = Math.round(parseFloat(transaction.rate) * 100);
 
-      // Update order with tracking and status
-      await db.update(orders)
-        .set({
-          tracking: trackingNumber,
-          carrier,
-          status: "shipped",
-        })
-        .where(eq(orders.orderId, orderId));
+      // Wrap order update and ledger entry in a transaction for atomicity
+      await db.transaction(async (tx) => {
+        // Update order with tracking and status
+        await tx.update(orders)
+          .set({
+            tracking: trackingNumber,
+            carrier,
+            status: "shipped",
+          })
+          .where(eq(orders.orderId, orderId));
 
-      // Create ledger entry for shipping label purchase (debit - expense)
-      await db.insert(accountingLedger).values({
-        inventoryId: order.inventoryId,
-        orderId: order.orderId,
-        eventType: "shipping_label",
-        amountCents: shippingCostCents,
-        direction: "debit",
-        note: `Shippo label purchase - ${carrier} - Tracking: ${trackingNumber} - Transaction: ${transaction.object_id}`,
+        // Create ledger entry for shipping label purchase (debit - expense)
+        await tx.insert(accountingLedger).values({
+          inventoryId: order.inventoryId,
+          orderId: order.orderId,
+          eventType: "shipping_label",
+          amountCents: shippingCostCents,
+          direction: "debit",
+          note: `Shippo label purchase - ${carrier} - Tracking: ${trackingNumber} - Transaction: ${transaction.object_id}`,
+        });
       });
 
       res.json({
@@ -1656,5 +1667,195 @@ Output only JSON:
   });
 
   const httpServer = createServer(app);
+
+  // Background job: Periodically sync eBay orders
+  // Runs every hour to fetch new orders and create ledger entries
+  const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  const AUTO_SYNC_DAYS_BACK = 7; // Sync orders from last 7 days
+
+  async function autoSyncOrders() {
+    try {
+      console.log("Auto-syncing eBay orders...");
+      
+      const creationDateFrom = new Date();
+      creationDateFrom.setDate(creationDateFrom.getDate() - AUTO_SYNC_DAYS_BACK);
+      const fromDate = creationDateFrom.toISOString();
+
+      const ebayResponse = await getOrders({
+        creationDateFrom: fromDate,
+        limit: 200,
+      });
+
+      if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
+        console.log("No new orders to sync");
+        return;
+      }
+
+      let syncedCount = 0;
+      let updatedCount = 0;
+
+      for (const ebayOrder of ebayResponse.orders) {
+        try {
+          // Wrap each order sync in a transaction for atomicity
+          await db.transaction(async (tx) => {
+            const [existingOrder] = await tx
+              .select()
+              .from(orders)
+              .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+
+            if (existingOrder) {
+              updatedCount++;
+              return;
+            }
+
+            const lineItem = ebayOrder.lineItems?.[0];
+            if (!lineItem) return;
+
+            const [listing] = await tx
+              .select()
+              .from(listings)
+              .where(eq(listings.ebayItemId, lineItem.lineItemId));
+
+            if (!listing) {
+              console.warn(`Listing not found for eBay item ${lineItem.lineItemId}`);
+              return;
+            }
+
+            const buyerUsername = ebayOrder.buyer?.username || "unknown";
+            let [buyer] = await tx
+              .select()
+              .from(buyers)
+              .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+
+            if (!buyer) {
+              [buyer] = await tx
+                .insert(buyers)
+                .values({
+                  ebayBuyerUsername: buyerUsername,
+                  emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                })
+                .returning();
+            }
+
+            const saleGrossCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+            );
+            const shippingCollectedCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
+            );
+
+            // eBay fees (final value fee + promotion fee)
+            // Note: eBay provides detailed fee breakdown in the transaction response
+            // For now, we'll estimate at 13.25% (typical eBay final value fee)
+            const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+            const promotionFee = 0; // Would come from eBay transaction details
+
+            const salesTaxCents = Math.round(
+              parseFloat(ebayOrder.pricingSummary?.totalTax?.value || "0") * 100
+            );
+
+            const [newOrder] = await tx
+              .insert(orders)
+              .values({
+                ebayOrderId: ebayOrder.orderId,
+                listingId: listing.listingId,
+                buyerId: buyer.buyerId,
+                saleGrossCents,
+                shippingCollectedCents,
+                ebayFeesCents: ebayFinalValueFee + promotionFee,
+                payoutCents: 0, // Updated when payout occurs
+                orderDate: new Date(ebayOrder.creationDate),
+                shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
+                  ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
+                  : null,
+                status: "paid",
+              })
+              .returning();
+
+            const [inventoryItem] = await tx
+              .select()
+              .from(inventoryItems)
+              .where(eq(inventoryItems.inventoryId, listing.inventoryId));
+
+            // Create ledger entries for this order
+            const ledgerEntries: InsertAccountingLedger[] = [];
+
+            // 1. Sale entry (credit - revenue)
+            ledgerEntries.push({
+              inventoryId: listing.inventoryId,
+              orderId: newOrder.orderId,
+              eventType: "sale",
+              amountCents: saleGrossCents,
+              direction: "credit",
+              note: `Sale: ${listing.title}`,
+            });
+
+            // 2. eBay final value fee (debit - expense)
+            if (ebayFinalValueFee > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "fee",
+                amountCents: ebayFinalValueFee,
+                direction: "debit",
+                note: "eBay final value fee",
+              });
+            }
+
+            // 3. Promotion fee if applicable (debit - expense)
+            if (promotionFee > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "promotion_fee",
+                amountCents: promotionFee,
+                direction: "debit",
+                note: "eBay promotion fee",
+              });
+            }
+
+            // 4. Sales tax collected by marketplace (tracked separately for tax reporting)
+            if (salesTaxCents > 0) {
+              ledgerEntries.push({
+                inventoryId: listing.inventoryId,
+                orderId: newOrder.orderId,
+                eventType: "sales_tax_collected_by_marketplace",
+                amountCents: salesTaxCents,
+                direction: "credit",
+                note: "Sales tax collected by eBay (not taxable income)",
+              });
+            }
+
+            // Insert all ledger entries
+            await tx.insert(accountingLedger).values(ledgerEntries);
+
+            // Update vine item status to sold
+            if (inventoryItem) {
+              await tx
+                .update(vineItems)
+                .set({ status: "sold" })
+                .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
+            }
+
+            syncedCount++;
+          });
+        } catch (error: any) {
+          console.error(`Failed to sync order ${ebayOrder.orderId}:`, error);
+          // Continue with next order instead of failing the entire sync
+        }
+      }
+
+      console.log(`Auto-sync complete: ${syncedCount} new orders, ${updatedCount} already existed`);
+    } catch (error: any) {
+      console.error("Error in auto-sync:", error);
+    }
+  }
+
+  // Start the background sync job
+  setInterval(autoSyncOrders, SYNC_INTERVAL_MS);
+  
+  // Run once on startup (after a short delay to allow server to fully start)
+  setTimeout(autoSyncOrders, 30000); // 30 seconds after startup
+
   return httpServer;
 }
