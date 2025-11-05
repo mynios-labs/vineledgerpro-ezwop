@@ -21,6 +21,7 @@ import {
   healthEvents,
   importConflicts,
   amazon1099Data,
+  ebay1099Data,
   type InsertImport,
   type InsertImportRow,
   type InsertVineItem,
@@ -28,6 +29,7 @@ import {
   type InsertListing,
   type InsertAccountingLedger,
   insertAmazon1099Schema,
+  insertEbay1099Schema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder } from "./lib/ebay";
@@ -2168,6 +2170,102 @@ Output only JSON:
     }
   });
 
+  // eBay 1099-K CRUD endpoints
+  // Get all eBay 1099-K entries for the current user
+  app.get("/api/ebay-1099", async (_req, res) => {
+    try {
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
+      const data = await db
+        .select()
+        .from(ebay1099Data)
+        .where(eq(ebay1099Data.userId, userId))
+        .orderBy(desc(ebay1099Data.taxYear));
+      
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upsert eBay 1099-K entry for a specific year
+  app.post("/api/ebay-1099", async (req, res) => {
+    try {
+      const { taxYear, amountCents, notes } = insertEbay1099Schema.parse(req.body);
+      
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
+      // Check if entry exists for this user and year
+      const [existing] = await db
+        .select()
+        .from(ebay1099Data)
+        .where(
+          and(
+            eq(ebay1099Data.userId, userId),
+            eq(ebay1099Data.taxYear, taxYear)
+          )
+        );
+
+      if (existing) {
+        // Update existing entry
+        const [updated] = await db
+          .update(ebay1099Data)
+          .set({ 
+            amountCents, 
+            notes,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(ebay1099Data.userId, userId),
+              eq(ebay1099Data.taxYear, taxYear)
+            )
+          )
+          .returning();
+        
+        res.json(updated);
+      } else {
+        // Insert new entry
+        const [created] = await db
+          .insert(ebay1099Data)
+          .values({ userId, taxYear, amountCents, notes })
+          .returning();
+        
+        res.json(created);
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Delete eBay 1099-K entry
+  app.delete("/api/ebay-1099/:year", async (req, res) => {
+    try {
+      const year = parseInt(req.params.year);
+      
+      // For single-user deployment, use default userId
+      // In multi-tenant future, get from req.user or session
+      const userId = "default";
+      
+      await db
+        .delete(ebay1099Data)
+        .where(
+          and(
+            eq(ebay1099Data.userId, userId),
+            eq(ebay1099Data.taxYear, year)
+          )
+        );
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Tax Report - Comprehensive annual tax data
   app.get("/api/tax-report", async (_req, res) => {
     try {
@@ -2345,6 +2443,13 @@ Output only JSON:
         .where(eq(amazon1099Data.userId, userId))
         .orderBy(asc(amazon1099Data.taxYear));
 
+      // Get eBay 1099-K data for the current user
+      const ebay1099Entries = await db
+        .select()
+        .from(ebay1099Data)
+        .where(eq(ebay1099Data.userId, userId))
+        .orderBy(asc(ebay1099Data.taxYear));
+
       // Calculate ETV received each year from vine items
       const etvByYearReceived = new Map<number, number>();
       for (const item of allData) {
@@ -2353,6 +2458,12 @@ Output only JSON:
           year,
           (etvByYearReceived.get(year) || 0) + item.etvCents
         );
+      }
+
+      // Calculate gross sales by year (from annual summary)
+      const grossSalesByYear = new Map<number, number>();
+      for (const yearData of yearMap.values()) {
+        grossSalesByYear.set(yearData.year, yearData.salesGrossCents);
       }
 
       // Return comprehensive report
@@ -2381,6 +2492,19 @@ Output only JSON:
               reported1099Cents: amazon1099Entries.find((e) => e.taxYear === year)?.amountCents || null,
               hasDiscrepancy: amazon1099Entries.find((e) => e.taxYear === year)
                 ? Math.abs(etv - (amazon1099Entries.find((e) => e.taxYear === year)?.amountCents || 0)) > 100
+                : false,
+            }))
+            .sort((a, b) => a.year - b.year),
+        },
+        ebay1099: {
+          entries: ebay1099Entries,
+          salesByYear: Array.from(grossSalesByYear.entries())
+            .map(([year, sales]) => ({
+              year,
+              calculatedGrossSalesCents: sales,
+              reported1099KCents: ebay1099Entries.find((e) => e.taxYear === year)?.amountCents || null,
+              hasDiscrepancy: ebay1099Entries.find((e) => e.taxYear === year)
+                ? Math.abs(sales - (ebay1099Entries.find((e) => e.taxYear === year)?.amountCents || 0)) > 100
                 : false,
             }))
             .sort((a, b) => a.year - b.year),
