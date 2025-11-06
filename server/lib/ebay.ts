@@ -24,7 +24,18 @@ async function getAccessToken(): Promise<string> {
     body: "grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope",
   });
 
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("eBay OAuth error:", response.status, errorText);
+    throw new Error(`eBay authentication failed: ${response.status} ${errorText}`);
+  }
+
   const data = await response.json();
+  if (!data.access_token) {
+    console.error("eBay OAuth response missing access_token:", data);
+    throw new Error("eBay authentication failed: No access token in response");
+  }
+
   accessToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // Refresh 1 min before expiry
 
@@ -47,9 +58,10 @@ export async function getSuggestedCategories(keywords: string): Promise<any> {
   return response.json();
 }
 
-export async function createOrUpdateInventoryItem(sku: string, item: any): Promise<any> {
+export async function createOrUpdateInventoryItem(sku: string, item: any): Promise<void> {
   const token = await getAccessToken();
 
+  console.log(`[eBay] Creating/updating inventory item: ${sku}`);
   const response = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${sku}`,
     {
@@ -62,12 +74,19 @@ export async function createOrUpdateInventoryItem(sku: string, item: any): Promi
     }
   );
 
-  return response.ok ? null : response.json();
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error(`[eBay] Create inventory item failed:`, response.status, errorData);
+    throw new Error(`eBay create inventory item failed: ${response.status} - ${JSON.stringify(errorData)}`);
+  }
+  
+  console.log(`[eBay] Inventory item created successfully: ${sku}`);
 }
 
 export async function createOffer(offer: any): Promise<any> {
   const token = await getAccessToken();
 
+  console.log(`[eBay] Creating offer for SKU: ${offer.sku}`);
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
     method: "POST",
     headers: {
@@ -77,12 +96,26 @@ export async function createOffer(offer: any): Promise<any> {
     body: JSON.stringify(offer),
   });
 
-  return response.json();
+  const data = await response.json();
+  
+  if (!response.ok || data.errors) {
+    console.error(`[eBay] Create offer failed:`, response.status, data);
+    throw new Error(`eBay create offer failed: ${response.status} - ${JSON.stringify(data)}`);
+  }
+
+  if (!data.offerId) {
+    console.error(`[eBay] Offer response missing offerId:`, data);
+    throw new Error(`eBay create offer failed: No offerId in response`);
+  }
+
+  console.log(`[eBay] Offer created successfully: ${data.offerId}`);
+  return data;
 }
 
 export async function publishOffer(offerId: string): Promise<any> {
   const token = await getAccessToken();
 
+  console.log(`[eBay] Publishing offer: ${offerId}`);
   const response = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/offer/${offerId}/publish`,
     {
@@ -94,7 +127,20 @@ export async function publishOffer(offerId: string): Promise<any> {
     }
   );
 
-  return response.json();
+  const data = await response.json();
+  
+  if (!response.ok || data.errors) {
+    console.error(`[eBay] Publish offer failed:`, response.status, data);
+    throw new Error(`eBay publish offer failed: ${response.status} - ${JSON.stringify(data)}`);
+  }
+
+  if (!data.listingId) {
+    console.error(`[eBay] Publish response missing listingId:`, data);
+    throw new Error(`eBay publish offer failed: No listingId in response`);
+  }
+
+  console.log(`[eBay] Offer published successfully. Listing ID: ${data.listingId}`);
+  return data;
 }
 
 export async function uploadPictureToEbay(imageUrl: string): Promise<string> {
