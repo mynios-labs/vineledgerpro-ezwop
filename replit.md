@@ -1,254 +1,69 @@
 # eBay Resale & Bookkeeping Platform
 
 ## Overview
-
-This is a privacy-first eBay resale platform designed for Amazon Vine reviewers to list products while maintaining compliance with Amazon's terms of service. The application automates the entire workflow from importing Vine item data to publishing eBay listings, managing orders, generating shipping labels, and producing CPA-ready tax reports.
-
-**Core Features:**
-- Import and deduplicate Vine product data from XLSX files
-- Automated eBay listing creation with privacy enforcement
-- AI-generated unique titles and descriptions to avoid Amazon TOS violations
-- Order management with automated shipping label generation
-- Double-entry accounting ledger for tax compliance
-- Messaging and return case handling
+This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## User Preferences
-
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
-### Frontend Architecture
+### UI/UX Decisions
+The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives) and Tailwind CSS. The design is inspired by modern business applications like Linear and Stripe Dashboard, emphasizing clarity, data visibility, error prevention, and workflow efficiency. Key pages include Inventory, Draft Listing creation, Orders, Messages & Returns, Money & Ledger, and a Health dashboard.
 
-**Framework:** React 18 with Vite as the build tool
+### Technical Implementations
 
-**UI Component System:** shadcn/ui (Radix UI primitives) with Tailwind CSS for styling
+#### Frontend
+-   **Framework:** React 18, Vite
+-   **UI:** shadcn/ui, Tailwind CSS
+-   **State Management:** TanStack Query
+-   **Routing:** Wouter
+-   **Key Features:**
+    -   Inventory management with status tabs (Available, Do Not Sell, Sold/Live, Personal Use) and search/sort.
+    -   Item-centric Money & Ledger page with financial statistics and lifecycle view.
+    -   Comprehensive Tax Report page with Amazon and eBay 1099 reconciliation, including smart validation before printing.
+    -   Draft listing workflow for manual price and dimension entry, with UPS shipping estimates.
 
-**Design Philosophy:** Modern business application inspired by Linear, Vercel Dashboard, and Stripe Dashboard. Prioritizes clarity over decoration, data visibility, error prevention, and workflow efficiency.
+#### Backend
+-   **Runtime:** Node.js 20, TypeScript
+-   **Framework:** Express.js
+-   **Database ORM:** Drizzle ORM with PostgreSQL
+-   **API Design:** RESTful
+-   **Background Jobs:** Planned for eBay webhooks and scheduled tasks.
+-   **File Uploads:** Multer
+-   **Image Processing:** Sharp
 
-**State Management:** TanStack Query (React Query) for server state management and caching
+#### Data Model
+Core entities include Vine Item Management, Inventory & Listings, Order Fulfillment, Financial Tracking (double-entry ledger with detailed event types), Amazon and eBay 1099 Tracking, Configuration, and Monitoring. Key design decisions include SHA-256 hashing for deduplication, separate inventory tracking, event-based accounting, and tracking defective items for tax benefits.
 
-**Routing:** Wouter for lightweight client-side routing
-
-**Key Pages:**
-- Inventory page with typeahead search, status management, and 4-tab organization
-- Draft listing creation with AI-powered content generation (accessible only from inventory page, not in navigation)
-- Orders page with shipping label purchase
-- Messages & Returns for customer communication
-- Money & Ledger for item-centric financial tracking with lifecycle view, comprehensive stats, and CSV/PDF exports
-- Health dashboard for monitoring policy compliance
-
-**Inventory Page:**
-- **Four status tabs** for organizing items:
-  - Available: Items ready to be listed on eBay
-  - Do Not Sell: Items user doesn't want to sell
-  - Sold/Live: Items that are live on eBay or have been sold (includes reserved, sold, returned, gone statuses)
-  - Personal Use: Items user wants to keep for themselves
-- **Five stat cards** showing item counts across categories
-- **Status management buttons** on each item card for quick status changes
-- **Search and sort** functionality across all tabs
-- **Defective item marking** to exclude from taxable income calculations
-
-**Money & Ledger Page (Item-Centric View):**
-- **Three rows of financial stats:**
-  - Row 1: Total Sales, Total Fees, Shipping Costs
-  - Row 2: Total Payouts, Realized Gains, Net Profit/Loss
-  - Row 3: Business metrics (Total Listed, Active, Sold, Pending Ship, Defective, Avg Profit)
-- **Item lifecycle table** showing each item's complete financial history:
-  - Status, Title, Received, Listed, Sold dates
-  - Sale Price, Fees, Shipping Costs, Net P/L
-  - Sortable columns for easy analysis
-  - "Return to Inventory" action for cancelled orders and unsold listings
-- **API Endpoints:**
-  - `/api/accounting/items` - Full item-centric financial data with lifecycle dates and cost rollups
-  - `/api/accounting/stats` - Comprehensive business metrics (12 total stats)
-  - `/api/inventory/:inventoryId/return` - Return items to available inventory
-
-**Tax Report Page:**
-- **Amazon 1099 Reconciliation:** Critical feature to prevent double taxation
-  - Track Amazon Vine 1099-MISC/NEC forms by year
-  - Compare Amazon's reported 1099 amounts with calculated ETV from imports
-  - Highlight discrepancies between reported vs calculated values
-  - User can manually input Amazon 1099 amounts received at year-end
-  - Comprehensive tax notes explaining double taxation risk and proper treatment
-- **eBay 1099-K Reconciliation:** Track eBay marketplace tax reporting
-  - Track eBay 1099-K forms by year (gross payment processor reporting)
-  - Compare eBay's reported 1099-K amounts with calculated gross sales from orders
-  - Highlight discrepancies between reported vs calculated values
-  - User can manually input eBay 1099-K amounts received at year-end
-  - Integrated guidance on deducting cost basis and expenses from gross sales
-- **Print Report Validation:** Smart validation before printing
-  - Checks if tax year is complete (prevents printing incomplete year reports)
-  - Validates Amazon 1099 entries are present for all years with ETV
-  - Validates eBay 1099-K entries are present for all years with sales
-  - User-friendly alerts specify exactly what data is missing
-  - Only allows printing when all required data is complete
-- **Annual Tax Summary:** Year-by-year breakdown of sales, expenses, and net taxable income
-- **Cross-Year Analysis:** Items received in one year but sold in another (due to 6-month waiting period)
-- **Current Inventory Tracking:** Unsold items by year received with basis value
-- **API Endpoints:**
-  - `/api/tax-report` - Comprehensive annual tax data with Amazon & eBay 1099 reconciliation
-  - `/api/amazon-1099` - CRUD operations for Amazon 1099 entry management
-  - `/api/ebay-1099` - CRUD operations for eBay 1099-K entry management
-  - `/api/accounting/export/csv` - Full ledger export for CPA review
-
-**Draft Listing Workflow:**
-- No AI price suggestions - user sets prices manually based on market research
-- No auto-loaded dimensions - user measures and enters weight/dimensions manually
-- UPS shipping estimates with 5% cushion included
-- Choice between charging shipping separately or including in item price
-
-### Backend Architecture
-
-**Runtime:** Node.js 20 with TypeScript
-
-**Framework:** Express.js for HTTP server and API routing
-
-**Database ORM:** Drizzle ORM with PostgreSQL (Neon serverless)
-
-**API Design:** RESTful API endpoints under `/api/*` prefix
-
-**Background Jobs:** Intended for BullMQ or cron-based polling for eBay webhooks and scheduled tasks
-
-**File Uploads:** Multer middleware for handling XLSX imports and photo uploads
-
-**Image Processing:** Sharp for photo manipulation (EXIF scrubbing, resolution validation)
-
-### Data Model
-
-**Core Entities:**
-
-1. **Vine Item Management:** `imports`, `import_rows`, `vine_items` - Tracks imported products with deduplication via SHA-256 hashing
-2. **Inventory & Listings:** `inventory_items`, `listings`, `photo_sets` - Manages physical inventory and eBay listing lifecycle
-3. **Order Fulfillment:** `orders`, `buyers` - Tracks sales and customer information
-4. **Financial Tracking:** `accounting_ledger` - Double-entry bookkeeping with event types for basis, sales, fees, shipping, payouts
-   - **Event Types:** `basis_add`, `sale`, `fee`, `shipping_label`, `label_refund`, `return`, `writeoff`, `payout`, `promotion_fee`, `sales_tax_collected_by_marketplace`
-   - **eBay Fee Tracking:** Fully implemented - orders automatically create ledger entries for final value fees (13.25% estimation) and promotion fees
-   - **Shippo Charge Tracking:** Fully implemented - label purchases create "shipping_label" ledger entries; refunds create "label_refund" entries
-   - **Post-Shipping Adjustments:** Fully implemented - Shippo webhook handles weight correction charges via additional "shipping_label" entries
-   - **Implementation Status:** Complete with database transactions for atomicity
-   - **Automatic Sync:** Background job polls eBay every hour to sync new orders and create ledger entries
-   - **Tax Compliance:** CSV export includes all ledger entries with defective item flags for CPA review
-5. **Amazon 1099 Tracking:** `amazon_1099_data` - Stores Amazon Vine 1099-MISC/NEC amounts by year for reconciliation
-   - **User Scoping:** Multi-tenant ready with userId field (currently defaults to "default" for single-user deployment)
-   - **Unique Constraint:** Composite key on (userId, taxYear) prevents duplicate entries per user
-   - **Reconciliation:** Compares reported 1099 amounts with calculated ETV to detect discrepancies
-   - **Double Taxation Prevention:** Ensures proper cost basis deduction when items are sold
-6. **eBay 1099-K Tracking:** `ebay_1099_data` - Stores eBay 1099-K amounts by year for marketplace sales reconciliation
-   - **User Scoping:** Multi-tenant ready with userId field (currently defaults to "default" for single-user deployment)
-   - **Unique Constraint:** Composite key on (userId, taxYear) prevents duplicate entries per user
-   - **Reconciliation:** Compares reported 1099-K gross proceeds with calculated sales to detect discrepancies
-   - **Tax Reporting:** Validates gross sales match eBay's reporting before allowing tax report finalization
-7. **Configuration:** `address_profiles`, `business_policies` - Manages shipping addresses and eBay business policy templates
-8. **Monitoring:** `health_events` - Logs policy violations, late shipments, and system issues
-
-**Key Design Decisions:**
-- Unique constraint on `vine_items` using composite key (ASIN + received_date + ETV + serial) to prevent duplicate inventory
-- Row-level hashing (SHA-256) for deduplication during imports
-- Separate `inventory_items` table to track physical condition, location, and photos independent of Vine data
-- Ledger uses event-based accounting with explicit event types for different transaction categories
-- **Defective Item Tracking:** `vine_items` includes `defective` boolean and `defectiveNotes` text fields for tax reporting
-  - Items can be manually marked as defective from the inventory page
-  - Returns automatically mark items as defective with "Returned by buyer" note
-  - Defective status appears in accounting CSV exports alongside transaction data
-  - Tax benefit: Defective items can be excluded from taxable income calculations by your CPA
-
-### Authentication & Authorization
-
-**Current Implementation:** Simple in-memory user storage (`MemStorage` class) for single-user mode
-
-**Intended Approach:** Email magic link or local password authentication
-
-**Future Consideration:** The codebase is structured for multi-tenant expansion but currently focuses on single-user deployment
-
-### External Dependencies
-
-#### eBay APIs
-- **Taxonomy API:** Category suggestions for product classification
-- **Inventory API:** SKU and inventory item management
-- **Offer API:** Listing creation and price management (Buy It Now format only)
-- **Fulfillment API:** Order retrieval and tracking upload
-- **Post Order API:** Return case handling
-- **Messaging API:** Buyer communication
-- **Picture Services:** Photo hosting
-
-**OAuth Configuration:** Requires `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, scopes for Sell API and Messaging
-
-**Environment Toggle:** `EBAY_ENV` switches between sandbox and production endpoints
-
-**Listing Requirements:**
-- All listings are Buy It Now format (no auctions)
-- Handling time set to 1-2 days in eBay store settings (buffer before shipping)
-- This handling time is separate from carrier transit time
-- Business policies (fulfillment, payment, return) use eBay account defaults
-- Custom business policies can be configured in eBay Seller Hub and stored in business_policies table for future use
-
-#### Shipping Services
-**Primary Integration:** Shippo API (alternative: EasyPost)
-
-**Carrier:** UPS exclusively for all shipments
-
-**Functionality:** Rate calculation, label purchase, tracking number generation
-
-**Configuration:** `SHIPPO_API_KEY` environment variable
-
-**Pricing Strategy:**
-- Shipping estimates use UPS Ground rate only (cheapest option) plus 5% cushion for accuracy buffer
-- Cushion is baked into displayed rate but not explicitly shown to eBay buyers
-- Two pricing modes: "Charge Separately" (buyer pays shipping) or "Include in Price" (free shipping)
-- When including shipping in price, system suggests total = item price + shipping estimate with cushion
-
-#### AI Services
-**Provider:** OpenAI-compatible API via Replit AI Integrations
-
-**Use Cases:** 
-- Title rewriting (3 variations per listing)
-- Description generation
-- Message triage and reply drafting
-
-**NOT Used For:**
-- Pricing suggestions (removed - user sets all prices manually)
-- Dimension estimates (removed - user measures and enters manually)
-
-**Cost Optimization:** AI is used only for text generation; all policy checks and calculations are deterministic
-
-**Model:** GPT-4.1-mini via `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY`
-- **Note:** GPT-5 was initially specified but uses reasoning tokens (like o1) which resulted in empty outputs
-- GPT-4.1-mini is cost-efficient, reliable, and produces excellent eBay-friendly content
-- Fallback to gpt-4.1-nano if primary model fails
-
-#### Database
-**Service:** Neon Serverless PostgreSQL
-
-**Connection:** WebSocket-based connection pooling via `@neondatabase/serverless`
-
-**Schema Management:** Drizzle Kit for migrations and schema pushing
-
-**Configuration:** `DATABASE_URL` environment variable
+#### Authentication
+Currently uses simple in-memory storage for single-user mode, with future plans for email magic link or local password authentication.
 
 ### Privacy & Compliance
-
-**Privacy Enforcement:**
-- Forbidden word list blocks terms like "Vine", "received for review", "promo unit", ASIN references in public listings
-- Cosine similarity calculation prevents listings that are too similar to Amazon product descriptions
-- EXIF data scrubbing from uploaded photos
-- Dual address profiles: PO Box for returns, street address for label generation
-
-**Validation Flow:**
-1. AI generates listing content
-2. System checks for forbidden words
-3. Similarity score calculated against Amazon source text
-4. Warnings displayed to user before publication
-5. Safe return address automatically selected based on profile type
+Features include a forbidden word list, cosine similarity checks to prevent Amazon TOS violations, EXIF data scrubbing, and dual address profiles for returns and shipping. Listings undergo a validation flow before publication.
 
 ### Development & Build
+Uses Vite for frontend development with HMR and esbuild for backend bundling. Type safety is maintained with shared TypeScript types and strict TSConfig.
 
-**Development Mode:** Vite dev server with HMR, Express API proxy
+## External Dependencies
 
-**Production Build:** 
-- Frontend: Vite bundles to `dist/public`
-- Backend: esbuild bundles server to `dist/index.js`
+### eBay APIs
+-   **Used for:** Taxonomy, Inventory, Offer, Fulfillment, Post Order, Messaging, Picture Services.
+-   **Authentication:** Requires Client Credentials Flow (public APIs) and User Access Token (inventory/listing operations).
+-   **Specifics:** All listings are "Buy It Now." Requires merchant location and business policies configured in eBay Seller Hub.
 
-**Type Safety:** Shared TypeScript types between client and server via `@shared/schema`
+### Shipping Services
+-   **Primary:** Shippo API
+-   **Carrier:** UPS (exclusively)
+-   **Functionality:** Rate calculation, label purchase, tracking number generation.
+-   **Pricing:** UPS Ground rate + 5% cushion for estimates.
 
-**Code Quality:** TSConfig with strict mode, ESM modules throughout
+### AI Services
+-   **Provider:** OpenAI-compatible API via Replit AI Integrations.
+-   **Use Cases:** Title rewriting, description generation, message triage, reply drafting.
+-   **Model:** GPT-4.1-mini (with fallback to gpt-4.1-nano).
+
+### Database
+-   **Service:** Neon Serverless PostgreSQL.
+-   **Connection:** WebSocket-based via `@neondatabase/serverless`.
+-   **Schema Management:** Drizzle Kit.
