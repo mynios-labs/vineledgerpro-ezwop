@@ -7,10 +7,20 @@ let accessToken: string | null = null;
 let tokenExpiry: number = 0;
 
 async function getAccessToken(): Promise<string> {
+  // For Inventory API operations (creating listings), we need a User Access Token
+  // The user can generate this from eBay Developer Portal > User Tokens
+  // and add it to EBAY_USER_TOKEN environment variable
+  if (process.env.EBAY_USER_TOKEN) {
+    console.log("[eBay] Using EBAY_USER_TOKEN for authentication");
+    return process.env.EBAY_USER_TOKEN;
+  }
+
+  // Fallback to client credentials (read-only operations)
   if (accessToken && Date.now() < tokenExpiry) {
     return accessToken;
   }
 
+  console.log("[eBay] Generating client credentials token (read-only)");
   const credentials = Buffer.from(
     `${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`
   ).toString("base64");
@@ -69,13 +79,14 @@ export async function createOrUpdateInventoryItem(sku: string, item: any): Promi
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
+        "Content-Language": "en-US", // Required for Inventory API
       },
       body: JSON.stringify(item),
     }
   );
 
   if (!response.ok) {
-    const errorData = await response.json();
+    const errorData = await response.json().catch(() => ({}));
     console.error(`[eBay] Create inventory item failed:`, response.status, errorData);
     throw new Error(`eBay create inventory item failed: ${response.status} - ${JSON.stringify(errorData)}`);
   }
@@ -92,11 +103,12 @@ export async function createOffer(offer: any): Promise<any> {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "Content-Language": "en-US", // Required for Inventory API
     },
     body: JSON.stringify(offer),
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   
   if (!response.ok || data.errors) {
     console.error(`[eBay] Create offer failed:`, response.status, data);
@@ -123,11 +135,12 @@ export async function publishOffer(offerId: string): Promise<any> {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
+        "Content-Language": "en-US", // Required for Inventory API
       },
     }
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   
   if (!response.ok || data.errors) {
     console.error(`[eBay] Publish offer failed:`, response.status, data);
