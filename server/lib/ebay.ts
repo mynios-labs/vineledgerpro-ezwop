@@ -79,7 +79,8 @@ export async function createOrUpdateInventoryItem(sku: string, item: any): Promi
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Content-Language": "en-US", // Required for Inventory API
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US", // Required for Inventory API
       },
       body: JSON.stringify(item),
     }
@@ -103,7 +104,8 @@ export async function createOffer(offer: any): Promise<any> {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Content-Language": "en-US", // Required for Inventory API
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US", // Required for Inventory API
     },
     body: JSON.stringify(offer),
   });
@@ -135,7 +137,8 @@ export async function publishOffer(offerId: string): Promise<any> {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Content-Language": "en-US", // Required for Inventory API
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US", // Required for Inventory API
       },
     }
   );
