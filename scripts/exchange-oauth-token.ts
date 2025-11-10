@@ -1,9 +1,10 @@
-const AUTHORIZATION_CODE = "v%5E1.1%23i%5E1%23I%5E3%23f%5E0%23p%5E3%23r%5E1%23t%5EUl41XzU6NzMzOTZDNTlENDlCRjExQjY4NTVDOTg5Qjc0NjJCNzZfMF8xI0VeMTI4NA%3D%3D";
+const AUTHORIZATION_CODE = "v%5E1.1%23i%5E1%23f%5E0%23p%5E3%23r%5E1%23I%5E3%23t%5EUl41XzI6MDdDMTQ5QjA3NjlCQURCRkFCREZDNDE2RTkyRTc4ODdfMF8xI0VeMTI4NA%3D%3D";
 
 async function exchangeAuthCodeForToken() {
   const clientId = process.env.EBAY_CLIENT_ID;
   const clientSecret = process.env.EBAY_CLIENT_SECRET;
-  const redirectUri = process.env.EBAY_REDIRECT_URL;
+  // For token exchange, use just the RuName, not the full URL
+  const redirectUri = "antonio_hailese-antonioh-EZwop--azdszk";
 
   if (!clientId || !clientSecret || !redirectUri) {
     console.error("❌ Missing required environment variables:");
