@@ -5,7 +5,10 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums
-export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "reserved", "sold", "returned", "discarded", "do_not_sell", "gone", "personal_use"]);
+// Vine item status represents PHYSICAL inventory state only
+// - Listing state (draft/live/ended) is tracked in listings.state
+// - Sale state is tracked via orders table
+export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "returned", "discarded", "do_not_sell", "gone", "personal_use"]);
 export const listingStateEnum = pgEnum("listing_state", ["draft", "live", "ended"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"]);
 export const eventTypeEnum = pgEnum("event_type", ["basis_add", "sale", "fee", "shipping_label", "label_refund", "return", "writeoff", "payout", "promotion_fee", "sales_tax_collected_by_marketplace"]);
@@ -55,9 +58,10 @@ export const vineItems = pgTable("vine_items", {
 });
 
 // Inventory items table
+// One-to-one relationship: each vine item can have exactly ONE inventory record
 export const inventoryItems = pgTable("inventory_items", {
   inventoryId: varchar("inventory_id").primaryKey().default(sql`gen_random_uuid()`),
-  vineItemId: varchar("vine_item_id").notNull().references(() => vineItems.vineItemId, { onDelete: "cascade" }),
+  vineItemId: varchar("vine_item_id").notNull().unique().references(() => vineItems.vineItemId, { onDelete: "cascade" }),
   binLocation: text("bin_location"),
   condition: text("condition").notNull().default("New"),
   photoSetId: varchar("photo_set_id"),
