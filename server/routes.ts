@@ -375,69 +375,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
 
         if (isCancellation) {
-          // Handle cancellation: only delete if no inventory/listings/orders exist
+          // Handle cancellation: mark as cancelled for tax reconciliation, never delete
           if (existingItem) {
-            // Check if item has inventory record (which might have listings/orders)
-            const [inventoryRecord] = await db
-              .select()
-              .from(inventoryItems)
-              .where(eq(inventoryItems.vineItemId, existingItem.vineItemId));
-            
-            if (!inventoryRecord) {
-              // Safe to delete - no inventory record means no listings/orders
-              await db
-                .delete(vineItems)
-                .where(eq(vineItems.vineItemId, existingItem.vineItemId));
-              removed++;
-            } else {
-              // Has inventory - check for listings/orders
-              const [listing] = await db
-                .select()
-                .from(listings)
-                .where(eq(listings.inventoryId, inventoryRecord.inventoryId));
-              
-              if (!listing) {
-                // No listings - safe to delete both inventory and vine item
-                await db
-                  .delete(inventoryItems)
-                  .where(eq(inventoryItems.inventoryId, inventoryRecord.inventoryId));
-                await db
-                  .delete(vineItems)
-                  .where(eq(vineItems.vineItemId, existingItem.vineItemId));
-                removed++;
-              } else {
-                // Has listings - check if any have orders (ON DELETE RESTRICT)
-                const [order] = await db
-                  .select()
-                  .from(orders)
-                  .where(eq(orders.listingId, listing.listingId));
-                
-                if (!order) {
-                  // Listing but no orders - safe to delete
-                  await db
-                    .delete(listings)
-                    .where(eq(listings.listingId, listing.listingId));
-                  await db
-                    .delete(inventoryItems)
-                    .where(eq(inventoryItems.inventoryId, inventoryRecord.inventoryId));
-                  await db
-                    .delete(vineItems)
-                    .where(eq(vineItems.vineItemId, existingItem.vineItemId));
-                  removed++;
-                } else {
-                  // Has orders - can't delete due to ON DELETE RESTRICT
-                  // Mark as do_not_sell to preserve tax records
-                  await db
-                    .update(vineItems)
-                    .set({ status: "do_not_sell" })
-                    .where(eq(vineItems.vineItemId, existingItem.vineItemId));
-                  unchanged++;
-                }
-              }
-            }
+            // Update existing item to cancelled status
+            await db
+              .update(vineItems)
+              .set({ 
+                status: "cancelled",
+                cancelledAt: cancelledDate ? new Date(cancelledDate) : new Date(),
+                cancelledImportId: importRecord.id,
+              })
+              .where(eq(vineItems.vineItemId, existingItem.vineItemId));
+            removed++;  // "removed" from active inventory (now tracked as cancelled)
           } else {
-            // Cancellation for item that was never in our system - just skip
-            skipped++;
+            // Cancellation for item never in system - add it as cancelled for tax tracking
+            await db.insert(vineItems).values({
+              asin,
+              titleNorm: titleRaw,
+              etvCents: normalizedEtvCents,
+              receivedDate: new Date(receivedDate),
+              upc,
+              serial,
+              status: "cancelled",
+              cancelledAt: cancelledDate ? new Date(cancelledDate) : new Date(),
+              cancelledImportId: importRecord.id,
+            });
+            skipped++;  // Counted as "skipped" since it was never in active inventory
           }
         } else {
           // Normal processing (not a cancellation)
