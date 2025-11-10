@@ -312,16 +312,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let added = 0;
       let unchanged = 0;
       let conflicts = 0;
+      let removed = 0;
+      let skipped = 0;
 
       // Process each row
       for (const row of actualData as any[]) {
         // Map Amazon Vine report columns
+        // Column layout: A=ASIN, B=Title, C=???, D=Order Type, E=Order Date, F=Shipped Date, G=ETV
         const asin = row.__EMPTY || row.ASIN || row.asin || "";
         const titleRaw = row.__EMPTY_1 || row["Product Name"] || row.Title || row.title || "";
+        const orderType = row.__EMPTY_3 || row["Order Type"] || row.orderType || "";
         const etvValue = row.__EMPTY_6 || row["Estimated Tax Value"] || row.ETV || row.etv || "0";
         const etvCents = Math.round((parseFloat(etvValue) || 0) * 100);
-        const orderDate = row.__EMPTY_3 || row["Order Date"] || row.receivedDate || "";
-        const shippedDate = row.__EMPTY_4 || row["Shipped Date"] || "";
+        const orderDate = row.__EMPTY_4 || row["Order Date"] || row.receivedDate || "";
+        const shippedDate = row.__EMPTY_5 || row["Shipped Date"] || "";
         const receivedDate = shippedDate || orderDate || new Date().toISOString();
         const categoryRaw = row.Category || row.category || "";
         const upc = row.UPC || row.upc || null;
@@ -332,18 +336,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           continue;
         }
 
+        // Check if this is a cancellation
+        const isCancellation = orderType.toLowerCase().includes("cancellation");
+        
+        // For cancellations, ETV is often negative or zero - use absolute value for tracking
+        const normalizedEtvCents = isCancellation ? Math.abs(etvCents) : etvCents;
+
         const rowSha256 = crypto
           .createHash("sha256")
-          .update(`${asin}${titleRaw}${etvCents}${receivedDate}`)
+          .update(`${asin}${titleRaw}${normalizedEtvCents}${receivedDate}`)
           .digest("hex");
 
-        // Insert import row
+        // Insert import row (for audit trail)
         await db.insert(importRows).values({
           importId: importRecord.id,
           rowSha256,
           asin,
           titleRaw,
-          etvCents,
+          etvCents: normalizedEtvCents,
           receivedDate: new Date(receivedDate),
           categoryRaw,
           upc,
@@ -361,34 +371,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
             )
           );
 
-        if (!existingItem) {
-          // New item
-          await db.insert(vineItems).values({
-            asin,
-            titleNorm: titleRaw,
-            etvCents,
-            receivedDate: new Date(receivedDate),
-            upc,
-            serial,
-            status: "available",
-          });
-          added++;
-        } else if (existingItem.etvCents !== etvCents) {
-          // Conflict - ETV changed - store in conflicts table
-          await db.insert(importConflicts).values({
-            importId: importRecord.id,
-            vineItemId: existingItem.vineItemId,
-            asin,
-            titleNorm: titleRaw,
-            receivedDate: new Date(receivedDate),
-            existingEtvCents: existingItem.etvCents,
-            newEtvCents: etvCents,
-            resolved: false,
-          });
-          conflicts++;
+        if (isCancellation) {
+          // Handle cancellation: only delete if no inventory/listings/orders exist
+          if (existingItem) {
+            // Check if item has inventory record (which might have listings/orders)
+            const [inventoryRecord] = await db
+              .select()
+              .from(inventoryItems)
+              .where(eq(inventoryItems.vineItemId, existingItem.vineItemId));
+            
+            if (!inventoryRecord) {
+              // Safe to delete - no inventory record means no listings/orders
+              await db
+                .delete(vineItems)
+                .where(eq(vineItems.vineItemId, existingItem.vineItemId));
+              removed++;
+            } else {
+              // Has inventory - check for listings/orders
+              const [listing] = await db
+                .select()
+                .from(listings)
+                .where(eq(listings.inventoryId, inventoryRecord.inventoryId));
+              
+              if (!listing) {
+                // No listings - safe to delete both inventory and vine item
+                await db
+                  .delete(inventoryItems)
+                  .where(eq(inventoryItems.inventoryId, inventoryRecord.inventoryId));
+                await db
+                  .delete(vineItems)
+                  .where(eq(vineItems.vineItemId, existingItem.vineItemId));
+                removed++;
+              } else {
+                // Has listings - check if any have orders (ON DELETE RESTRICT)
+                const [order] = await db
+                  .select()
+                  .from(orders)
+                  .where(eq(orders.listingId, listing.listingId));
+                
+                if (!order) {
+                  // Listing but no orders - safe to delete
+                  await db
+                    .delete(listings)
+                    .where(eq(listings.listingId, listing.listingId));
+                  await db
+                    .delete(inventoryItems)
+                    .where(eq(inventoryItems.inventoryId, inventoryRecord.inventoryId));
+                  await db
+                    .delete(vineItems)
+                    .where(eq(vineItems.vineItemId, existingItem.vineItemId));
+                  removed++;
+                } else {
+                  // Has orders - can't delete due to ON DELETE RESTRICT
+                  // Mark as do_not_sell to preserve tax records
+                  await db
+                    .update(vineItems)
+                    .set({ status: "do_not_sell" })
+                    .where(eq(vineItems.vineItemId, existingItem.vineItemId));
+                  unchanged++;
+                }
+              }
+            }
+          } else {
+            // Cancellation for item that was never in our system - just skip
+            skipped++;
+          }
         } else {
-          // Unchanged
-          unchanged++;
+          // Normal processing (not a cancellation)
+          if (!existingItem) {
+            // New item
+            await db.insert(vineItems).values({
+              asin,
+              titleNorm: titleRaw,
+              etvCents: normalizedEtvCents,
+              receivedDate: new Date(receivedDate),
+              upc,
+              serial,
+              status: "available",
+            });
+            added++;
+          } else if (existingItem.etvCents !== normalizedEtvCents) {
+            // Conflict - ETV changed - store in conflicts table
+            await db.insert(importConflicts).values({
+              importId: importRecord.id,
+              vineItemId: existingItem.vineItemId,
+              asin,
+              titleNorm: titleRaw,
+              receivedDate: new Date(receivedDate),
+              existingEtvCents: existingItem.etvCents,
+              newEtvCents: normalizedEtvCents,
+              resolved: false,
+            });
+            conflicts++;
+          } else {
+            // Unchanged
+            unchanged++;
+          }
         }
       }
 
@@ -400,7 +478,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         importId: importRecord.id,
-        reconciliation: { added, unchanged, conflicts },
+        reconciliation: { added, unchanged, conflicts, removed, skipped },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
