@@ -6,22 +6,82 @@ const EBAY_API_BASE = process.env.EBAY_ENV === "production"
 let accessToken: string | null = null;
 let tokenExpiry: number = 0;
 
-async function getAccessToken(): Promise<string> {
-  // For Inventory API operations (creating listings), we need a User Access Token
-  // The user can generate this from eBay Developer Portal > User Tokens
-  // and add it to EBAY_USER_TOKEN environment variable
-  if (process.env.EBAY_USER_TOKEN) {
-    console.log("[eBay] Using EBAY_USER_TOKEN for authentication");
-    return process.env.EBAY_USER_TOKEN;
+async function refreshAccessToken(): Promise<string> {
+  const isProduction = process.env.EBAY_ENV === "production";
+  const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
+  const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
+  const refreshToken = isProduction ? process.env.EBAY_PROD_REFRESH_TOKEN : process.env.EBAY_REFRESH_TOKEN;
+
+  if (!refreshToken) {
+    throw new Error("No refresh token available - please authorize the application");
   }
 
-  // Fallback to client credentials (read-only operations)
+  console.log("[eBay] Refreshing access token using refresh token");
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  
+  // eBay requires the same scopes that were originally granted
+  const scopes = [
+    "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+    "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+    "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  ].join(" ");
+
+  const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${credentials}`,
+    },
+    body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}&scope=${encodeURIComponent(scopes)}`,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[eBay] Token refresh failed:", response.status, errorText);
+    
+    // Check for expired refresh token
+    if (errorText.includes("invalid_grant")) {
+      throw new Error(
+        "eBay refresh token has expired (18-month limit). " +
+        "Please re-authorize the application via eBay Developer Portal > User Tokens."
+      );
+    }
+    
+    throw new Error(`eBay token refresh failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  accessToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // Refresh 1 min before expiry
+
+  console.log(`[eBay] Access token refreshed, expires in ${data.expires_in} seconds`);
+  return accessToken!;
+}
+
+async function getAccessToken(): Promise<string> {
+  // Priority 1: Use manually provided user token (for testing or manual override)
+  const isProduction = process.env.EBAY_ENV === "production";
+  const userToken = isProduction ? process.env.EBAY_PROD_USER_TOKEN : process.env.EBAY_USER_TOKEN;
+  
+  if (userToken) {
+    console.log("[eBay] Using manual user token for authentication");
+    return userToken;
+  }
+
+  // Priority 2: Use cached access token if still valid
   if (accessToken && Date.now() < tokenExpiry) {
     return accessToken;
   }
 
+  // Priority 3: Refresh access token using refresh token
+  const refreshToken = isProduction ? process.env.EBAY_PROD_REFRESH_TOKEN : process.env.EBAY_REFRESH_TOKEN;
+  if (refreshToken) {
+    return await refreshAccessToken();
+  }
+
+  // Priority 4: Fallback to client credentials (read-only operations)
   console.log("[eBay] Generating client credentials token (read-only)");
-  const isProduction = process.env.EBAY_ENV === "production";
   const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
   const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
   
