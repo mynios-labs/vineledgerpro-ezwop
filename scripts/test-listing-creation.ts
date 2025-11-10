@@ -227,7 +227,9 @@ async function testListingCreation() {
           listingDescription: description,
           availableQuantity: 1,
           categoryId: "172008", // Electronics > Portable Audio & Headphones > Bluetooth Speakers
-          // NOTE: listingPolicies removed - eBay will use account defaults
+          listingPolicies: {
+            fulfillmentPolicyId: "278016180015", // UPS Ground Saver + free shipping
+          },
           pricingSummary: {
             price: {
               value: "29.99",
