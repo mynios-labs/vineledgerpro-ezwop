@@ -1,11 +1,12 @@
 const clientId = process.env.EBAY_CLIENT_ID;
 const ruName = "antonio_hailese-antonioh-EZwop--azdszk";
 
+// eBay requires production scope URIs even for sandbox environment
 const scopes = [
-  "https://api.sandbox.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.sandbox.ebay.com/oauth/api_scope/sell.inventory.readonly",
-  "https://api.sandbox.ebay.com/oauth/api_scope/sell.fulfillment",
-  "https://api.sandbox.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 ].join(" ");
 
 const authUrl = `https://auth.sandbox.ebay.com/oauth2/authorize?` +
