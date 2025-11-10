@@ -42,30 +42,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get vine items stats
   app.get("/api/vine-items/stats", async (_req, res) => {
     try {
-      const result = await db
-        .select({
-          status: vineItems.status,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(vineItems)
-        .groupBy(vineItems.status);
-
-      const reservedCount = result.find((r) => r.status === "reserved")?.count || 0;
-      const soldCount = result.find((r) => r.status === "sold")?.count || 0;
-      const returnedCount = result.find((r) => r.status === "returned")?.count || 0;
-      const goneCount = result.find((r) => r.status === "gone")?.count || 0;
+      // Get all status counts, live listings, and sold items in parallel
+      const [statusResult, liveListingsResult, soldResult] = await Promise.all([
+        db
+          .select({
+            status: vineItems.status,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(vineItems)
+          .groupBy(vineItems.status),
+        
+        // Count items with live eBay listings (state='live')
+        db
+          .select({ count: sql<number>`count(DISTINCT ${listings.inventoryId})::int` })
+          .from(listings)
+          .where(eq(listings.state, "live")),
+        
+        // Count items with orders (sold items)
+        db
+          .select({ count: sql<number>`count(DISTINCT ${listings.inventoryId})::int` })
+          .from(orders)
+          .innerJoin(listings, eq(listings.listingId, orders.listingId)),
+      ]);
 
       const stats = {
-        total: result.reduce((sum, row) => sum + row.count, 0),
-        available: result.find((r) => r.status === "available")?.count || 0,
-        reserved: reservedCount,
-        sold: soldCount,
-        do_not_sell: result.find((r) => r.status === "do_not_sell")?.count || 0,
-        gone: goneCount,
-        returned: returnedCount,
-        discarded: result.find((r) => r.status === "discarded")?.count || 0,
-        personal_use: result.find((r) => r.status === "personal_use")?.count || 0,
-        sold_or_live: reservedCount + soldCount + returnedCount + goneCount,
+        total: statusResult.reduce((sum, row) => sum + row.count, 0),
+        available: statusResult.find((r) => r.status === "available")?.count || 0,
+        do_not_sell: statusResult.find((r) => r.status === "do_not_sell")?.count || 0,
+        personal_use: statusResult.find((r) => r.status === "personal_use")?.count || 0,
+        gone: statusResult.find((r) => r.status === "gone")?.count || 0,
+        returned: statusResult.find((r) => r.status === "returned")?.count || 0,
+        discarded: statusResult.find((r) => r.status === "discarded")?.count || 0,
+        live_listings: liveListingsResult[0]?.count || 0,
+        sold: soldResult[0]?.count || 0,
       };
 
       res.json(stats);
@@ -79,16 +88,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { search, sort, status } = req.query;
       
-      // Build all filter conditions
+      // Handle special tab filters: live_listings and sold
+      if (status === "live_listings") {
+        // Get vine items with live eBay listings
+        const liveItems = await db
+          .select({
+            vineItemId: vineItems.vineItemId,
+            asin: vineItems.asin,
+            titleNorm: vineItems.titleNorm,
+            etvCents: vineItems.etvCents,
+            receivedDate: vineItems.receivedDate,
+            upc: vineItems.upc,
+            serial: vineItems.serial,
+            status: vineItems.status,
+            defective: vineItems.defective,
+            defectiveNotes: vineItems.defectiveNotes,
+          })
+          .from(vineItems)
+          .innerJoin(inventoryItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+          .innerJoin(listings, eq(listings.inventoryId, inventoryItems.inventoryId))
+          .where(eq(listings.state, "live"))
+          .orderBy(desc(vineItems.receivedDate))
+          .limit(100);
+        return res.json(liveItems);
+      }
+      
+      if (status === "sold") {
+        // Get vine items with orders (sold items)
+        const soldItems = await db
+          .selectDistinct({
+            vineItemId: vineItems.vineItemId,
+            asin: vineItems.asin,
+            titleNorm: vineItems.titleNorm,
+            etvCents: vineItems.etvCents,
+            receivedDate: vineItems.receivedDate,
+            upc: vineItems.upc,
+            serial: vineItems.serial,
+            status: vineItems.status,
+            defective: vineItems.defective,
+            defectiveNotes: vineItems.defectiveNotes,
+          })
+          .from(vineItems)
+          .innerJoin(inventoryItems, eq(inventoryItems.vineItemId, vineItems.vineItemId))
+          .innerJoin(listings, eq(listings.inventoryId, inventoryItems.inventoryId))
+          .innerJoin(orders, eq(orders.listingId, listings.listingId))
+          .orderBy(desc(vineItems.receivedDate))
+          .limit(100);
+        return res.json(soldItems);
+      }
+      
+      // Build filter conditions for regular status tabs
       const conditions = [];
       
-      // Add status filter
+      // Add status filter for regular statuses
       if (status && typeof status === "string") {
-        if (status === "sold_or_live") {
-          conditions.push(inArray(vineItems.status, ["reserved", "sold", "returned", "gone"]));
-        } else {
-          conditions.push(eq(vineItems.status, status));
-        }
+        conditions.push(eq(vineItems.status, status));
       }
       
       // Add search filter
