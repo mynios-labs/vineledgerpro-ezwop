@@ -32,7 +32,7 @@ import {
   insertEbay1099Schema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
-import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder } from "./lib/ebay";
+import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 
@@ -928,12 +928,16 @@ Output only JSON:
         },
       });
 
+      // Get or create merchant location
+      const merchantLocationKey = await getOrCreateMerchantLocation();
+
       // Note: listingPolicies are omitted - eBay will use the account's default business policies
       // To use specific policies, they must first be created in your eBay account and stored in business_policies table
       const offer = await createOffer({
         sku,
         marketplaceId: "EBAY_US",
         format: "FIXED_PRICE",
+        merchantLocationKey,
         pricingSummary: {
           price: {
             value: (parseInt(priceCents) / 100).toFixed(2),

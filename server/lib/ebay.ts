@@ -159,6 +159,100 @@ export async function publishOffer(offerId: string): Promise<any> {
   return data;
 }
 
+export async function getFulfillmentPolicies(): Promise<any> {
+  const token = await getAccessToken();
+
+  console.log(`[eBay] Fetching fulfillment policies...`);
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_US`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Accept-Language": "en-US",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    console.error(`[eBay] Get fulfillment policies failed:`, response.status, errorData);
+    throw new Error(`eBay get fulfillment policies failed: ${response.status} - ${JSON.stringify(errorData)}`);
+  }
+
+  const data = await response.json();
+  console.log(`[eBay] Found ${data.fulfillmentPolicies?.length || 0} fulfillment policies`);
+  return data;
+}
+
+export async function getOrCreateMerchantLocation(): Promise<string> {
+  const token = await getAccessToken();
+  const locationKey = "DEFAULT_LOCATION";
+
+  // Try to get existing location
+  try {
+    console.log(`[eBay] Checking for existing merchant location: ${locationKey}`);
+    const response = await fetch(
+      `${EBAY_API_BASE}/sell/inventory/v1/location/${locationKey}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Accept-Language": "en-US",
+        },
+      }
+    );
+
+    if (response.ok) {
+      console.log(`[eBay] Using existing merchant location: ${locationKey}`);
+      return locationKey;
+    }
+  } catch (error) {
+    console.log(`[eBay] Merchant location doesn't exist, creating new one...`);
+  }
+
+  // Create new location
+  const locationData = {
+    location: {
+      address: {
+        addressLine1: "123 Main St",
+        city: "San Jose",
+        stateOrProvince: "CA",
+        postalCode: "95131",
+        country: "US",
+      },
+    },
+    locationInstructions: "Default shipping location",
+    name: "Default Location",
+    merchantLocationStatus: "ENABLED",
+    locationTypes: ["WAREHOUSE"],
+  };
+
+  console.log(`[eBay] Creating merchant location: ${locationKey}`);
+  const createResponse = await fetch(
+    `${EBAY_API_BASE}/sell/inventory/v1/location/${locationKey}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US",
+      },
+      body: JSON.stringify(locationData),
+    }
+  );
+
+  if (!createResponse.ok) {
+    const errorData = await createResponse.json().catch(() => ({}));
+    console.error(`[eBay] Create merchant location failed:`, createResponse.status, errorData);
+    throw new Error(`eBay create merchant location failed: ${createResponse.status} - ${JSON.stringify(errorData)}`);
+  }
+
+  console.log(`[eBay] Merchant location created successfully: ${locationKey}`);
+  return locationKey;
+}
+
 export async function uploadPictureToEbay(imageUrl: string): Promise<string> {
   // In production, you would upload to eBay Picture Services
   // For now, return the URL as-is

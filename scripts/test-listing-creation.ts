@@ -13,7 +13,7 @@ import { vineItems, inventoryItems, photoSets, listings } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { createOrUpdateInventoryItem, createOffer, publishOffer } from "../server/lib/ebay";
+import { createOrUpdateInventoryItem, createOffer, publishOffer, getOrCreateMerchantLocation } from "../server/lib/ebay";
 import { estimateShippingCost } from "../server/lib/shippo";
 
 // Product images - using publicly accessible placeholder URLs for testing
@@ -212,12 +212,18 @@ async function testListingCreation() {
         });
         console.log(`  ✓ eBay inventory item created: ${sku}`);
 
-        // STEP 5: Create eBay offer
+        // STEP 5: Get or create merchant location
+        console.log("  → Getting merchant location...");
+        const merchantLocationKey = await getOrCreateMerchantLocation();
+        console.log(`  ✓ Using merchant location: ${merchantLocationKey}`);
+
+        // STEP 6: Create eBay offer
         console.log("  → Creating eBay offer...");
         const offerResponse = await createOffer({
           sku: sku,
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
+          merchantLocationKey,
           listingDescription: description,
           availableQuantity: 1,
           categoryId: "172008", // Electronics > Portable Audio & Headphones > Bluetooth Speakers
