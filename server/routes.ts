@@ -318,14 +318,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Process each row
       for (const row of actualData as any[]) {
         // Map Amazon Vine report columns
-        // Column layout: A=ASIN, B=Title, C=???, D=Order Type, E=Order Date, F=Shipped Date, G=ETV
-        const asin = row.__EMPTY || row.ASIN || row.asin || "";
-        const titleRaw = row.__EMPTY_1 || row["Product Name"] || row.Title || row.title || "";
+        // Column layout: A=Order#, B=ASIN, C=Product Name, D=Order Type, E=Order Date, F=Shipped Date, G=Cancelled Date, H=ETV
+        const asin = row.__EMPTY_1 || row.ASIN || row.asin || "";
+        const titleRaw = row.__EMPTY_2 || row["Product Name"] || row.Title || row.title || "";
         const orderType = row.__EMPTY_3 || row["Order Type"] || row.orderType || "";
-        const etvValue = row.__EMPTY_6 || row["Estimated Tax Value"] || row.ETV || row.etv || "0";
-        const etvCents = Math.round((parseFloat(etvValue) || 0) * 100);
-        const orderDate = row.__EMPTY_4 || row["Order Date"] || row.receivedDate || "";
+        const orderDate = row.__EMPTY_4 || row["Order Date"] || "";
         const shippedDate = row.__EMPTY_5 || row["Shipped Date"] || "";
+        const cancelledDate = row.__EMPTY_6 || row["Cancelled Date"] || "";
+        const etvValue = row.__EMPTY_7 || row["Estimated Tax Value"] || row.ETV || row.etv || "0";
+        const etvCents = Math.round((parseFloat(etvValue) || 0) * 100);
         const receivedDate = shippedDate || orderDate || new Date().toISOString();
         const categoryRaw = row.Category || row.category || "";
         const upc = row.UPC || row.upc || null;
@@ -336,8 +337,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           continue;
         }
 
-        // Check if this is a cancellation
-        const isCancellation = orderType.toLowerCase().includes("cancellation");
+        // Check if this is a cancellation (use BOTH order type AND cancelled date)
+        const isCancellation = 
+          orderType.toLowerCase().includes("cancellation") || 
+          (cancelledDate && cancelledDate.trim() !== "");
         
         // For cancellations, ETV is often negative or zero - use absolute value for tracking
         const normalizedEtvCents = isCancellation ? Math.abs(etvCents) : etvCents;
