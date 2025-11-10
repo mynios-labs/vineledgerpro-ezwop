@@ -1,6 +1,8 @@
 const isProduction = process.env.EBAY_ENV === "production";
 const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
-const ruName = "antonio_hailese-antonioh-EZwop--azdszk";
+const ruName = isProduction 
+  ? "antonio_hailese-antonioh-EZwop--diagcaljd"  // Production
+  : "antonio_hailese-antonioh-EZwop--azdszk";    // Sandbox
 
 // eBay requires production scope URIs even for sandbox environment
 const scopes = [

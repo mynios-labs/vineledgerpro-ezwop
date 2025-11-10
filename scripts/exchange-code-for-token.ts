@@ -10,7 +10,9 @@ async function exchangeCodeForToken() {
   const isProduction = process.env.EBAY_ENV === "production";
   const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
   const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
-  const ruName = "antonio_hailese-antonioh-EZwop--azdszk";
+  const ruName = isProduction 
+    ? "antonio_hailese-antonioh-EZwop--diagcaljd"  // Production
+    : "antonio_hailese-antonioh-EZwop--azdszk";    // Sandbox
   const EBAY_API_BASE = isProduction ? "https://api.ebay.com" : "https://api.sandbox.ebay.com";
   
   console.log(`\n🔐 ${isProduction ? 'PRODUCTION' : 'SANDBOX'} OAuth Token Exchange\n`);
