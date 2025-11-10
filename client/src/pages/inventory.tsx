@@ -17,7 +17,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VineItem } from "@shared/schema";
 
-type StatusTab = "available" | "do_not_sell" | "sold_or_live" | "personal_use";
+type StatusTab = "available" | "do_not_sell" | "live_listings" | "sold" | "personal_use";
 type SortOrder = "recent" | "oldest" | "price_high" | "price_low" | "six_months_plus";
 
 // Helper function to check if item is less than 6 months old
@@ -57,14 +57,13 @@ export default function Inventory() {
   const { data: stats } = useQuery<{
     total: number;
     available: number;
-    reserved: number;
-    sold: number;
     do_not_sell: number;
+    personal_use: number;
     gone: number;
     returned: number;
     discarded: number;
-    personal_use: number;
-    sold_or_live: number;
+    live_listings: number;
+    sold: number;
   }>({
     queryKey: ["/api/vine-items/stats"],
   });
@@ -189,7 +188,8 @@ export default function Inventory() {
   // Use stats from API instead of computing client-side
   const availableCount = stats?.available || 0;
   const doNotSellCount = stats?.do_not_sell || 0;
-  const soldOrLiveCount = stats?.sold_or_live || 0;
+  const liveListingsCount = stats?.live_listings || 0;
+  const soldCount = stats?.sold || 0;
   const personalUseCount = stats?.personal_use || 0;
 
   return (
@@ -207,7 +207,7 @@ export default function Inventory() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Items</CardTitle>
@@ -246,12 +246,24 @@ export default function Inventory() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Sold/Live</CardTitle>
+              <CardTitle className="text-sm font-medium">Live Listings</CardTitle>
               <div className="h-3 w-3 rounded-full bg-chart-2" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-semibold text-chart-2" data-testid="text-sold-live-items">
-                {soldOrLiveCount}
+              <div className="text-3xl font-semibold text-chart-2" data-testid="text-live-listings-items">
+                {liveListingsCount}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Sold</CardTitle>
+              <div className="h-3 w-3 rounded-full bg-chart-5" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-chart-5" data-testid="text-sold-items">
+                {soldCount}
               </div>
             </CardContent>
           </Card>
@@ -299,15 +311,18 @@ export default function Inventory() {
 
         {/* Tabs for status filtering */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="grid w-full grid-cols-4" data-testid="tabs-status">
+          <TabsList className="grid w-full grid-cols-5" data-testid="tabs-status">
             <TabsTrigger value="available" data-testid="tab-available">
               Available ({availableCount})
             </TabsTrigger>
             <TabsTrigger value="do_not_sell" data-testid="tab-do-not-sell">
               Do Not Sell ({doNotSellCount})
             </TabsTrigger>
-            <TabsTrigger value="sold_or_live" data-testid="tab-sold-live">
-              Sold/Live ({soldOrLiveCount})
+            <TabsTrigger value="live_listings" data-testid="tab-live-listings">
+              Live Listings ({liveListingsCount})
+            </TabsTrigger>
+            <TabsTrigger value="sold" data-testid="tab-sold">
+              Sold ({soldCount})
             </TabsTrigger>
             <TabsTrigger value="personal_use" data-testid="tab-personal-use">
               Personal Use ({personalUseCount})
