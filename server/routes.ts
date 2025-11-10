@@ -343,7 +343,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Check if this is a cancellation (use BOTH order type AND cancelled date)
         const isCancellation = 
           orderType.toLowerCase().includes("cancellation") || 
-          (cancelledDate && cancelledDate.trim() !== "");
+          (cancelledDate && typeof cancelledDate === 'string' && cancelledDate.trim() !== "");
         
         // For cancellations, ETV is often negative or zero - use absolute value for tracking
         const normalizedEtvCents = isCancellation ? Math.abs(etvCents) : etvCents;
