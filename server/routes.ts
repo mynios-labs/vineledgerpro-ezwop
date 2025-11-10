@@ -65,14 +65,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .innerJoin(listings, eq(listings.listingId, orders.listingId)),
       ]);
 
+      const cancelledCount = statusResult.find((r) => r.status === "cancelled")?.count || 0;
+      
       const stats = {
-        total: statusResult.reduce((sum, row) => sum + row.count, 0),
+        total: statusResult.reduce((sum, row) => sum + row.count, 0) - cancelledCount,  // Exclude cancelled from active inventory total
         available: statusResult.find((r) => r.status === "available")?.count || 0,
         do_not_sell: statusResult.find((r) => r.status === "do_not_sell")?.count || 0,
         personal_use: statusResult.find((r) => r.status === "personal_use")?.count || 0,
         gone: statusResult.find((r) => r.status === "gone")?.count || 0,
         returned: statusResult.find((r) => r.status === "returned")?.count || 0,
         discarded: statusResult.find((r) => r.status === "discarded")?.count || 0,
+        cancelled: cancelledCount,  // Track cancelled for tax reconciliation
         live_listings: liveListingsResult[0]?.count || 0,
         sold: soldResult[0]?.count || 0,
       };
