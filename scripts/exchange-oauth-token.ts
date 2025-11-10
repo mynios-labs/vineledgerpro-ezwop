@@ -1,4 +1,4 @@
-const AUTHORIZATION_CODE = "v%5E1.1%23i%5E1%23p%5E3%23r%5E1%23I%5E3%23f%5E0%23t%5EUl41XzQ6QjU1RkJEQUI0NEZGNDkzMzFENzlDQzlEMTE2ODkxMDRfMF8xI0VeMTI4NA%3D%3D";
+const AUTHORIZATION_CODE = "v%5E1.1%23i%5E1%23I%5E3%23f%5E0%23p%5E3%23r%5E1%23t%5EUl41XzM6RTdENjQ2OThCOEY4QjlGMEFGM0JCRTIxQjQzRUJFOEVfMF8xI0VeMTI4NA%3D%3D";
 
 async function exchangeAuthCodeForToken() {
   const clientId = process.env.EBAY_CLIENT_ID;
@@ -24,10 +24,10 @@ async function exchangeAuthCodeForToken() {
   
   const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
   
-  // Try without redirect_uri since the Test Sign-in button uses eBay's own redirect
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: AUTHORIZATION_CODE,
+    redirect_uri: redirectUri,
   });
 
   try {
