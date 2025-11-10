@@ -8,7 +8,8 @@ import { z } from "zod";
 // Vine item status represents PHYSICAL inventory state only
 // - Listing state (draft/live/ended) is tracked in listings.state
 // - Sale state is tracked via orders table
-export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "returned", "discarded", "do_not_sell", "gone", "personal_use"]);
+// - "cancelled" = order was cancelled by Amazon, never received (tracked for tax reconciliation)
+export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "returned", "discarded", "do_not_sell", "gone", "personal_use", "cancelled"]);
 export const listingStateEnum = pgEnum("listing_state", ["draft", "live", "ended"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"]);
 export const eventTypeEnum = pgEnum("event_type", ["basis_add", "sale", "fee", "shipping_label", "label_refund", "return", "writeoff", "payout", "promotion_fee", "sales_tax_collected_by_marketplace"]);
@@ -55,6 +56,8 @@ export const vineItems = pgTable("vine_items", {
   status: vineItemStatusEnum("status").notNull().default("available"),
   defective: boolean("defective").notNull().default(false),
   defectiveNotes: text("defective_notes"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancelledImportId: varchar("cancelled_import_id").references(() => imports.id, { onDelete: "set null" }),
 });
 
 // Inventory items table
