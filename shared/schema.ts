@@ -34,6 +34,7 @@ export const importRows = pgTable("import_rows", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   importId: varchar("import_id").notNull().references(() => imports.id, { onDelete: "cascade" }),
   rowSha256: text("row_sha256").notNull(),
+  orderNumber: text("order_number"),  // Amazon order number
   asin: text("asin"),
   titleRaw: text("title_raw"),
   etvCents: integer("etv_cents"),
@@ -47,6 +48,7 @@ export const importRows = pgTable("import_rows", {
 // Vine items table
 export const vineItems = pgTable("vine_items", {
   vineItemId: varchar("vine_item_id").primaryKey().default(sql`gen_random_uuid()`),
+  orderNumber: text("order_number"),  // Amazon order number for matching cancellations
   asin: text("asin").notNull(),
   titleNorm: text("title_norm").notNull(),
   etvCents: integer("etv_cents").notNull(),

@@ -322,13 +322,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const row of actualData as any[]) {
         // Map Amazon Vine report columns
         // Column layout: A=Order#, B=ASIN, C=Product Name, D=Order Type, E=Order Date, F=Shipped Date, G=Cancelled Date, H=ETV
-        const asin = row.__EMPTY_1 || row.ASIN || row.asin || "";
-        const titleRaw = row.__EMPTY_2 || row["Product Name"] || row.Title || row.title || "";
-        const orderType = row.__EMPTY_3 || row["Order Type"] || row.orderType || "";
-        const orderDate = row.__EMPTY_4 || row["Order Date"] || "";
-        const shippedDate = row.__EMPTY_5 || row["Shipped Date"] || "";
-        const cancelledDate = row.__EMPTY_6 || row["Cancelled Date"] || "";
-        const etvValue = row.__EMPTY_7 || row["Estimated Tax Value"] || row.ETV || row.etv || "0";
+        // Note: First column uses the file title as key, then __EMPTY, __EMPTY_1, etc.
+        const orderNumber = row["Amazon Vine Itemized Report for 2025"] || row["Order Number"] || "";
+        const asin = row.__EMPTY || row.ASIN || "";
+        const titleRaw = row.__EMPTY_1 || row["Product Name"] || "";
+        const orderType = row.__EMPTY_2 || row["Order Type"] || "";
+        const orderDate = row.__EMPTY_3 || row["Order Date"] || "";
+        const shippedDate = row.__EMPTY_4 || row["Shipped Date"] || "";
+        const cancelledDate = row.__EMPTY_5 || row["Cancelled Date"] || "";
+        const etvValue = row.__EMPTY_6 || row["Estimated Tax Value"] || row.ETV || "0";
         const etvCents = Math.round((parseFloat(etvValue) || 0) * 100);
         const receivedDate = shippedDate || orderDate || new Date().toISOString();
         const categoryRaw = row.Category || row.category || "";
@@ -357,6 +359,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await db.insert(importRows).values({
           importId: importRecord.id,
           rowSha256,
+          orderNumber,
           asin,
           titleRaw,
           etvCents: normalizedEtvCents,
@@ -367,14 +370,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Check for existing vine item
+        // For cancellations: match by order number (same order being cancelled)
+        // For regular orders: match by ASIN + receivedDate (duplicates of same item on same day)
         const [existingItem] = await db
           .select()
           .from(vineItems)
           .where(
-            and(
-              eq(vineItems.asin, asin),
-              eq(vineItems.receivedDate, new Date(receivedDate))
-            )
+            isCancellation && orderNumber
+              ? eq(vineItems.orderNumber, orderNumber)
+              : and(
+                  eq(vineItems.asin, asin),
+                  eq(vineItems.receivedDate, new Date(receivedDate))
+                )
           );
 
         if (isCancellation) {
@@ -393,6 +400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             // Cancellation for item never in system - add it as cancelled for tax tracking
             await db.insert(vineItems).values({
+              orderNumber,
               asin,
               titleNorm: titleRaw,
               etvCents: normalizedEtvCents,
@@ -410,6 +418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!existingItem) {
             // New item
             await db.insert(vineItems).values({
+              orderNumber,
               asin,
               titleNorm: titleRaw,
               etvCents: normalizedEtvCents,
