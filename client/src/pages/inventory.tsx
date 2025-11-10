@@ -191,6 +191,7 @@ export default function Inventory() {
   const liveListingsCount = stats?.live_listings || 0;
   const soldCount = stats?.sold || 0;
   const personalUseCount = stats?.personal_use || 0;
+  const cancelledCount = stats?.cancelled || 0;
 
   return (
     <div className="flex-1 overflow-auto">
@@ -279,6 +280,18 @@ export default function Inventory() {
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Cancelled</CardTitle>
+              <div className="h-3 w-3 rounded-full bg-destructive" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-destructive" data-testid="text-cancelled-items">
+                {cancelledCount}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Search and Sort */}
@@ -311,7 +324,7 @@ export default function Inventory() {
 
         {/* Tabs for status filtering */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="grid w-full grid-cols-5" data-testid="tabs-status">
+          <TabsList className="grid w-full grid-cols-6" data-testid="tabs-status">
             <TabsTrigger value="available" data-testid="tab-available">
               Available ({availableCount})
             </TabsTrigger>
@@ -326,6 +339,9 @@ export default function Inventory() {
             </TabsTrigger>
             <TabsTrigger value="personal_use" data-testid="tab-personal-use">
               Personal Use ({personalUseCount})
+            </TabsTrigger>
+            <TabsTrigger value="cancelled" data-testid="tab-cancelled">
+              Cancelled ({cancelledCount})
             </TabsTrigger>
           </TabsList>
 
