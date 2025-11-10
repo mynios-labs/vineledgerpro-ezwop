@@ -381,7 +381,9 @@ export default function Inventory() {
                                 <div className="flex gap-2 flex-wrap">
                                   <Badge
                                     variant={
-                                      item.status === "available"
+                                      item.status === "cancelled"
+                                        ? "destructive"
+                                        : item.status === "available"
                                         ? "default"
                                         : item.status === "do_not_sell"
                                         ? "secondary"
@@ -389,7 +391,11 @@ export default function Inventory() {
                                     }
                                     data-testid={`badge-status-${item.vineItemId}`}
                                   >
-                                    {item.status === "do_not_sell" ? "Do Not Sell" : item.status}
+                                    {item.status === "cancelled" 
+                                      ? "Cancelled by Amazon Vine" 
+                                      : item.status === "do_not_sell" 
+                                      ? "Do Not Sell" 
+                                      : item.status}
                                   </Badge>
                                   {item.defective && (
                                     <Badge variant="destructive" data-testid={`badge-defective-${item.vineItemId}`}>
@@ -411,24 +417,32 @@ export default function Inventory() {
                                 <span data-testid={`text-etv-${item.vineItemId}`}>
                                   ETV: ${(item.etvCents / 100).toFixed(2)}
                                 </span>
-                                <span data-testid={`text-received-${item.vineItemId}`} className={isLessThan6MonthsOld(item.receivedDate) ? "text-destructive font-semibold" : ""}>
-                                  Received: {new Date(item.receivedDate).toLocaleDateString()}
-                                  {isLessThan6MonthsOld(item.receivedDate) && (
-                                    <Badge variant="destructive" className="ml-2" data-testid={`badge-age-warning-${item.vineItemId}`}>
-                                      <AlertTriangle className="w-3 h-3 mr-1" />
-                                      Less than 6 months
-                                    </Badge>
-                                  )}
-                                </span>
+                                {item.status === "cancelled" && item.cancelledAt ? (
+                                  <span data-testid={`text-cancelled-${item.vineItemId}`} className="text-destructive font-semibold">
+                                    Cancelled: {new Date(item.cancelledAt).toLocaleDateString()}
+                                  </span>
+                                ) : (
+                                  <span data-testid={`text-received-${item.vineItemId}`} className={isLessThan6MonthsOld(item.receivedDate) ? "text-destructive font-semibold" : ""}>
+                                    Received: {new Date(item.receivedDate).toLocaleDateString()}
+                                    {isLessThan6MonthsOld(item.receivedDate) && (
+                                      <Badge variant="destructive" className="ml-2" data-testid={`badge-age-warning-${item.vineItemId}`}>
+                                        <AlertTriangle className="w-3 h-3 mr-1" />
+                                        Less than 6 months
+                                      </Badge>
+                                    )}
+                                  </span>
+                                )}
                               </div>
                             </div>
-                            <Button 
-                              variant="outline" 
-                              onClick={(e) => handleCreateListingClick(e, item)}
-                              data-testid={`button-select-${item.vineItemId}`}
-                            >
-                              Create Listing
-                            </Button>
+                            {item.status !== "cancelled" && (
+                              <Button 
+                                variant="outline" 
+                                onClick={(e) => handleCreateListingClick(e, item)}
+                                data-testid={`button-select-${item.vineItemId}`}
+                              >
+                                Create Listing
+                              </Button>
+                            )}
                           </div>
                           
                           <div className="flex flex-col gap-3 pt-2 border-t">
@@ -463,7 +477,8 @@ export default function Inventory() {
                                   Make Available
                                 </Button>
                               )}
-                              {activeTab !== "do_not_sell" && (
+                              {/* Hide Do Not Sell and Personal Use buttons for cancelled items */}
+                              {item.status !== "cancelled" && activeTab !== "do_not_sell" && (
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -475,7 +490,7 @@ export default function Inventory() {
                                   Do Not Sell
                                 </Button>
                               )}
-                              {activeTab !== "personal_use" && (
+                              {item.status !== "cancelled" && activeTab !== "personal_use" && (
                                 <Button
                                   variant="outline"
                                   size="sm"
