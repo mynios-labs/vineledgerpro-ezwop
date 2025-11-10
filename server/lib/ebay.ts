@@ -21,8 +21,12 @@ async function getAccessToken(): Promise<string> {
   }
 
   console.log("[eBay] Generating client credentials token (read-only)");
+  const isProduction = process.env.EBAY_ENV === "production";
+  const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
+  const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
+  
   const credentials = Buffer.from(
-    `${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`
+    `${clientId}:${clientSecret}`
   ).toString("base64");
 
   const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
