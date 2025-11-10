@@ -3,7 +3,14 @@
 ## Overview
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
-## Recent Updates (January 2025)
+## Recent Updates (November 2025)
+- **Cancellation Tracking System**: Implemented comprehensive tracking for cancelled Amazon Vine orders
+  - Added `cancelled` status to vine_item_status enum with cancelledAt timestamp and cancelledImportId tracking
+  - Added `orderNumber` field to vine_items for precise order matching (prevents duplicate entries)
+  - Updated import logic to match cancellations by order number instead of ASIN+date (eliminates duplicate items in inventory)
+  - Fixed XLSX column mapping bug (Amazon title row offset)
+  - Cancelled items excluded from active inventory total but tracked separately for tax reconciliation
+  - Stats endpoint returns `cancelled` count for CPA-ready tax reports (reduces taxable income by cancelled ETVs)
 - **Data Model Cleanup**: Removed "sold" and "reserved" from vine_item_status enum - these are now tracked via Listings (draft/live/ended) and Orders tables respectively
 - **1:1 Inventory Constraint**: Enforced one-to-one relationship between Vine Items and Inventory Items (cleaned up 99 duplicate records, added unique constraint)
 - **Production OAuth**: Implemented refresh token support for eBay API with proper scope handling and automatic token renewal (18-month refresh token lifecycle)
