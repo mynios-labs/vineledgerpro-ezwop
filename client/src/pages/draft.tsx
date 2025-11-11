@@ -88,6 +88,16 @@ export default function DraftPage() {
     staleTime: 0,
   });
 
+  // Fulfillment policies
+  const { data: fulfillmentPolicies, isLoading: loadingPolicies, error: policiesError } = useQuery<Array<{
+    fulfillmentPolicyId: string;
+    name: string;
+    shippingOptions?: Array<{ shippingServiceCode?: string }>;
+  }>>({
+    queryKey: ["/api/ebay/fulfillment-policies"],
+    staleTime: 15 * 60 * 1000, // 15 minutes (matches backend cache)
+  });
+
   // Reset category and fulfillment policy state when switching to a different item
   useEffect(() => {
     setSelectedCategoryId(null);
@@ -136,16 +146,6 @@ export default function DraftPage() {
     queryKey: [`/api/ebay/categories?q=${debouncedCategorySearch}`],
     enabled: debouncedCategorySearch.length > 2,
     staleTime: 60000, // Cache for 1 minute
-  });
-
-  // Fulfillment policies
-  const { data: fulfillmentPolicies, isLoading: loadingPolicies, error: policiesError } = useQuery<Array<{
-    fulfillmentPolicyId: string;
-    name: string;
-    shippingOptions?: Array<{ shippingServiceCode?: string }>;
-  }>>({
-    queryKey: ["/api/ebay/fulfillment-policies"],
-    staleTime: 15 * 60 * 1000, // 15 minutes (matches backend cache)
   });
 
   // Initialize editable titles when suggestions load (only once or on regenerate)
