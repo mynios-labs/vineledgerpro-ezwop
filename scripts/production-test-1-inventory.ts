@@ -2,7 +2,7 @@
 // Safe: Does NOT create offers or publish anything
 import { createOrUpdateInventoryItem, getOrCreateMerchantLocation } from "../server/lib/ebay";
 
-const TEST_SKU = "VINE-TEST-PROD-001";
+const TEST_SKU = "ITEM-TEST-PROD-001";
 
 async function createTestInventory() {
   const confirmFlag = process.argv.includes("--confirm");

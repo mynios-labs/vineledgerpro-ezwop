@@ -172,7 +172,7 @@ async function testListingCreation() {
         console.log(`  ✓ Vine item marked as reserved`);
 
         // STEP 4: Create eBay inventory item via API
-        const sku = `VINE-${vineItem.vineItemId}`;
+        const sku = `ITEM-${vineItem.vineItemId}`;
         const title = `Premium ${productSet.name} - Brand New Condition`;
         const description = `High-quality ${productSet.name.toLowerCase()} in brand new condition. Perfect for home or office use. Fast shipping with tracking.`;
         

@@ -145,7 +145,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Add status filter for regular statuses
       if (status && typeof status === "string") {
-        conditions.push(eq(vineItems.status, status));
+        conditions.push(eq(vineItems.status, status as any));
       }
       
       // Add search filter
@@ -685,7 +685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Generate unique titles and description using AI
       // Using gpt-4.1-mini for cost efficiency - produces excellent eBay-friendly copy
-      const basisPrice = item.etv || 0;
+      const basisPrice = item.etvCents ? item.etvCents / 100 : 0;
       const valueMessage = basisPrice > 0 
         ? `\n\nVALUE MESSAGING (IMPORTANT):
 - This item typically retails for $${basisPrice.toFixed(2)}
@@ -1034,7 +1034,7 @@ Output only JSON:
         .returning();
 
       // Create eBay listing
-      const sku = `VINE-${inventoryItem.inventoryId}`;
+      const sku = `ITEM-${inventoryItem.inventoryId}`;
       await createOrUpdateInventoryItem(sku, {
         product: {
           title,
@@ -1113,11 +1113,8 @@ Output only JSON:
         listing = created;
       }
 
-      // Update vine item status
-      await db
-        .update(vineItems)
-        .set({ status: "reserved" })
-        .where(eq(vineItems.vineItemId, vineItemId));
+      // Note: vine_items.status is NOT updated to "reserved" anymore
+      // Listing existence now tracks reservation status
 
       // Create accounting entry for basis
       const [vineItem] = await db
@@ -1234,11 +1231,11 @@ Output only JSON:
         .set({ status: "available" })
         .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
 
-      // If there was a listing, mark it as cancelled
+      // If there was a listing, mark it as ended
       if (listing) {
         await db
           .update(listings)
-          .set({ state: "cancelled" })
+          .set({ state: "ended" })
           .where(eq(listings.listingId, listing.listingId));
       }
 
@@ -1422,13 +1419,8 @@ Output only JSON:
             // Insert all ledger entries
             await tx.insert(accountingLedger).values(ledgerEntries);
 
-            // Update vine item status to sold
-            if (inventoryItem) {
-              await tx
-                .update(vineItems)
-                .set({ status: "sold" })
-                .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
-            }
+            // Note: vine_items.status is NOT updated to "sold"
+            // Order existence now tracks sold status
 
             syncedCount++;
           });
@@ -1823,7 +1815,6 @@ Output only JSON:
           receivedDate: row.vine_items.receivedDate,
           publishedAt: row.listings?.publishedAt || null,
           orderDate: row.orders?.orderDate || null,
-          shippedAt: row.orders?.shippedAt || null,
           orderStatus: row.orders?.status || null,
           basisCents,
           listPriceCents: row.listings?.priceCents || 0,
@@ -2199,13 +2190,8 @@ Output only JSON:
             // Insert all ledger entries
             await tx.insert(accountingLedger).values(ledgerEntries);
 
-            // Update vine item status to sold
-            if (inventoryItem) {
-              await tx
-                .update(vineItems)
-                .set({ status: "sold" })
-                .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
-            }
+            // Note: vine_items.status is NOT updated to "sold"
+            // Order existence now tracks sold status
 
             syncedCount++;
           });
@@ -2615,8 +2601,8 @@ Output only JSON:
 
       // Calculate gross sales by year (from annual summary)
       const grossSalesByYear = new Map<number, number>();
-      for (const yearData of yearMap.values()) {
-        grossSalesByYear.set(yearData.year, yearData.salesGrossCents);
+      for (const yearData of Array.from(yearMap.values())) {
+        grossSalesByYear.set(yearData.year, yearData.grossSalesCents);
       }
 
       // Return comprehensive report

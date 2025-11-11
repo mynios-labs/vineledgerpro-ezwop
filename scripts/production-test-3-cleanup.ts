@@ -1,6 +1,6 @@
 // PRODUCTION TEST - Step 3: Cleanup (Delete Test Items)
 // Safe: Deletes test offer and inventory item
-const TEST_SKU = "VINE-TEST-PROD-001";
+const TEST_SKU = "ITEM-TEST-PROD-001";
 
 async function cleanup() {
   const token = process.env.EBAY_USER_TOKEN;
