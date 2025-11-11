@@ -4,6 +4,14 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **eBay Fulfillment Policy Integration** (Nov 11): Added complete fulfillment policy selection workflow
+  - **API Endpoint**: GET /api/ebay/fulfillment-policies with 15-minute caching to fetch user's eBay fulfillment policies
+  - **Draft Page UI**: Added Fulfillment Policy card with Select dropdown, auto-selection for single policy, and visual confirmation
+  - **State Management**: Auto-loads stored policy when editing existing listings, resets on item change, preserves manual selections
+  - **Validation**: Publish endpoint blocks submission if no fulfillment policy selected (frontend and backend validation)
+  - **eBay API Integration**: createOffer payload includes fulfillmentPolicyId in listingPolicies section (required by eBay)
+  - **Database**: Added fulfillmentPolicyId column to listings table for persistence
+  - **Error Handling**: UI displays loading states, API errors, and empty states with actionable messages
 - **Image Hosting for eBay Listings** (Nov 11): Fixed eBay image rejection errors by implementing proper HTTPS hosting
   - **Root Cause**: eBay Inventory API rejects data URLs (base64-encoded images); requires publicly accessible HTTPS URLs
   - **Solution**: Implemented filesystem-based image hosting with Express static serving
