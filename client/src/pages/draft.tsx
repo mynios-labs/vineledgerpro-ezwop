@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ArrowLeft, Upload, X, AlertTriangle, CheckCircle, Sparkles, RefreshCw, Edit2 } from "lucide-react";
+import { ArrowLeft, Upload, X, AlertTriangle, CheckCircle, Sparkles, RefreshCw, Edit2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,25 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { VineItem, Listing } from "@shared/schema";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+type StructuredDescription = {
+  intro: string;
+  bullets: string[];
+  closing: string;
+};
+
+// Helper: Convert structured description to eBay-formatted plaintext
+function serializeDescription(desc: StructuredDescription): string {
+  const bulletList = desc.bullets.map(b => `• ${b}`).join('\n');
+  return `${desc.intro}\n\n${bulletList}\n\n${desc.closing}`;
+}
 
 export default function DraftPage() {
   const [, setLocation] = useLocation();
@@ -36,6 +55,10 @@ export default function DraftPage() {
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
   const [totalPriceInput, setTotalPriceInput] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>("");
+  const [categorySearch, setCategorySearch] = useState<string>("");
+  const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -49,7 +72,8 @@ export default function DraftPage() {
 
   const { data: titleSuggestions, isLoading: generatingTitles } = useQuery<{
     titles: string[];
-    description: string;
+    originalTitleLengths: number[];
+    description: StructuredDescription;
     categoryId: string;
     categoryName: string;
     privacyWarnings: string[];
@@ -58,6 +82,13 @@ export default function DraftPage() {
     queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}&_refresh=${regenerateCount}`],
     enabled: !!vineItemId,
     staleTime: 0,
+  });
+
+  // Category search results
+  const { data: categorySearchResults } = useQuery<Array<{ categoryId: string; categoryName: string }>>({
+    queryKey: [`/api/ebay/categories?q=${categorySearch}`],
+    enabled: categorySearch.length > 2,
+    staleTime: 60000, // Cache for 1 minute
   });
 
   // Initialize editable titles when suggestions load (only once or on regenerate)
@@ -76,6 +107,28 @@ export default function DraftPage() {
       setEditableTitles(allTitles);
     }
   }, [regenerateCount]);
+
+  // Initialize category when suggestions load
+  useEffect(() => {
+    if (titleSuggestions && !selectedCategoryId) {
+      setSelectedCategoryId(titleSuggestions.categoryId);
+      setSelectedCategoryName(titleSuggestions.categoryName);
+    }
+  }, [titleSuggestions]);
+
+  // Initialize editable description when suggestions load
+  useEffect(() => {
+    if (titleSuggestions && !editableDescription) {
+      setEditableDescription(titleSuggestions.description);
+    }
+  }, [titleSuggestions]);
+
+  // Re-initialize description when regenerating (regenerateCount changes)
+  useEffect(() => {
+    if (regenerateCount > 0 && titleSuggestions) {
+      setEditableDescription(titleSuggestions.description);
+    }
+  }, [regenerateCount, titleSuggestions?.description]);
 
   // Fetch shipping estimate when dimensions are provided
   useEffect(() => {
@@ -131,16 +184,20 @@ export default function DraftPage() {
 
   const publishMutation = useMutation({
     mutationFn: async () => {
-      if (!titleSuggestions || selectedPhotos.length < 2 || editableTitles.length === 0) {
+      if (!editableDescription || selectedPhotos.length < 2 || editableTitles.length === 0) {
         throw new Error("Please add at least 2 photos");
+      }
+
+      if (!selectedCategoryId || selectedCategoryId === "0") {
+        throw new Error("Please select a valid category");
       }
 
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
       formData.append("title", editableTitles[selectedTitle]);
-      formData.append("description", titleSuggestions.description);
-      formData.append("categoryId", titleSuggestions.categoryId);
+      formData.append("description", serializeDescription(editableDescription));
+      formData.append("categoryId", selectedCategoryId);
       formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
       formData.append("weightOz", weightOz);
       formData.append("dimsL", dimsL);
@@ -243,19 +300,55 @@ export default function DraftPage() {
               </CardContent>
             </Card>
 
-            {/* Category & Specifics */}
+            {/* Category Selector */}
             {titleSuggestions && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Category</CardTitle>
+                  <CardDescription>Search or use AI-suggested category</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-chart-1" />
-                    <span className="font-medium" data-testid="text-category">{titleSuggestions.categoryName}</span>
-                    <Badge variant="outline" className="ml-auto font-mono text-xs">
-                      {titleSuggestions.categoryId}
-                    </Badge>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Selected Category</Label>
+                    <div className="flex items-center gap-2 p-3 rounded-lg border bg-muted/50">
+                      <CheckCircle className="w-4 h-4 text-chart-1 flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="font-medium text-sm" data-testid="text-category">{selectedCategoryName || "No category selected"}</div>
+                        <div className="text-xs text-muted-foreground font-mono">ID: {selectedCategoryId || "—"}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Search Categories</Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        value={categorySearch}
+                        onChange={(e) => setCategorySearch(e.target.value)}
+                        placeholder="Search for category..."
+                        className="pl-9"
+                        data-testid="input-category-search"
+                      />
+                    </div>
+                    {categorySearchResults && categorySearchResults.length > 0 && (
+                      <div className="border rounded-lg max-h-48 overflow-y-auto">
+                        {categorySearchResults.map((cat) => (
+                          <button
+                            key={cat.categoryId}
+                            onClick={() => {
+                              setSelectedCategoryId(cat.categoryId);
+                              setSelectedCategoryName(cat.categoryName);
+                              setCategorySearch("");
+                            }}
+                            className="w-full p-2 text-left text-sm hover:bg-accent transition-colors"
+                            data-testid={`button-select-category-${cat.categoryId}`}
+                          >
+                            <div className="font-medium">{cat.categoryName}</div>
+                            <div className="text-xs text-muted-foreground font-mono">ID: {cat.categoryId}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -305,36 +398,53 @@ export default function DraftPage() {
                           </Badge>
                         )}
                         {editingTitleIndex === index ? (
-                          <Input
-                            value={title}
-                            onChange={(e) => handleTitleEdit(index, e.target.value)}
-                            onBlur={() => setEditingTitleIndex(null)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                setEditingTitleIndex(null);
-                              }
-                            }}
-                            autoFocus
-                            className="text-sm"
-                            placeholder="Enter title..."
-                            data-testid={`input-title-${index}`}
-                          />
+                          <div className="space-y-1">
+                            <Input
+                              value={title}
+                              onChange={(e) => handleTitleEdit(index, e.target.value)}
+                              onBlur={() => setEditingTitleIndex(null)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  setEditingTitleIndex(null);
+                                }
+                              }}
+                              autoFocus
+                              className="text-sm"
+                              placeholder="Enter title..."
+                              data-testid={`input-title-${index}`}
+                            />
+                            <div className={`text-xs ${title.length > 80 ? 'text-destructive font-medium' : title.length > 70 ? 'text-chart-3' : 'text-muted-foreground'}`}>
+                              {title.length}/80 characters {title.length > 80 && '(too long!)'}
+                            </div>
+                          </div>
                         ) : (
-                          <div className="flex items-start gap-2 group">
-                            <p className="text-sm flex-1 leading-relaxed" data-testid={`text-title-${index}`}>
-                              {title}
-                            </p>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={`h-6 w-6 flex-shrink-0 transition-opacity ${
-                                hoveredTitleIndex === index ? 'opacity-100' : 'opacity-0'
-                              }`}
-                              onClick={() => setEditingTitleIndex(index)}
-                              data-testid={`button-edit-title-${index}`}
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </Button>
+                          <div className="space-y-1">
+                            <div className="flex items-start gap-2 group">
+                              <p className="text-sm flex-1 leading-relaxed" data-testid={`text-title-${index}`}>
+                                {title}
+                              </p>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`h-6 w-6 flex-shrink-0 transition-opacity ${
+                                  hoveredTitleIndex === index ? 'opacity-100' : 'opacity-0'
+                                }`}
+                                onClick={() => setEditingTitleIndex(index)}
+                                data-testid={`button-edit-title-${index}`}
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className={`text-xs ${title.length > 80 ? 'text-destructive font-medium' : title.length > 70 ? 'text-chart-3' : 'text-muted-foreground'}`}>
+                                {title.length}/80 characters
+                              </div>
+                              {titleSuggestions?.originalTitleLengths?.[index] && titleSuggestions.originalTitleLengths[index] > 80 && (
+                                <Badge variant="outline" className="text-xs">
+                                  Truncated from {titleSuggestions.originalTitleLengths[index]}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -351,18 +461,75 @@ export default function DraftPage() {
             </Card>
 
             {/* Description */}
-            {titleSuggestions && (
+            {titleSuggestions && editableDescription && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Description</CardTitle>
+                  <CardDescription>Edit your listing description</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <Textarea
-                    value={titleSuggestions.description}
-                    readOnly
-                    className="min-h-[120px] font-sans resize-none"
-                    data-testid="textarea-description"
-                  />
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Opening Paragraph</Label>
+                    <Textarea
+                      value={editableDescription.intro}
+                      onChange={(e) => setEditableDescription({ ...editableDescription, intro: e.target.value })}
+                      className="min-h-[80px] font-sans"
+                      placeholder="Benefit-focused opening paragraph..."
+                      data-testid="textarea-description-intro"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Key Features (Bullets)</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditableDescription({
+                          ...editableDescription,
+                          bullets: [...editableDescription.bullets, ""]
+                        })}
+                        data-testid="button-add-bullet"
+                      >
+                        Add Bullet
+                      </Button>
+                    </div>
+                    {editableDescription.bullets.map((bullet, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          value={bullet}
+                          onChange={(e) => {
+                            const updated = [...editableDescription.bullets];
+                            updated[index] = e.target.value;
+                            setEditableDescription({ ...editableDescription, bullets: updated });
+                          }}
+                          placeholder={`Feature ${index + 1}...`}
+                          data-testid={`input-bullet-${index}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const updated = editableDescription.bullets.filter((_, i) => i !== index);
+                            setEditableDescription({ ...editableDescription, bullets: updated });
+                          }}
+                          data-testid={`button-remove-bullet-${index}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Closing Statement</Label>
+                    <Input
+                      value={editableDescription.closing}
+                      onChange={(e) => setEditableDescription({ ...editableDescription, closing: e.target.value })}
+                      placeholder="Call-to-action or confidence statement..."
+                      data-testid="input-description-closing"
+                    />
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -690,12 +857,22 @@ export default function DraftPage() {
                       )}
                     </div>
                     <Separator />
-                    <div className="text-sm space-y-2">
-                      <div className="font-semibold">Description</div>
-                      <p className="text-muted-foreground whitespace-pre-wrap" data-testid="text-preview-description">
-                        {titleSuggestions.description}
-                      </p>
-                    </div>
+                    {editableDescription && (
+                      <div className="text-sm space-y-2">
+                        <div className="font-semibold">Description</div>
+                        <div className="text-muted-foreground whitespace-pre-wrap" data-testid="text-preview-description">
+                          <p className="mb-3">{editableDescription.intro}</p>
+                          {editableDescription.bullets.length > 0 && (
+                            <ul className="space-y-1 mb-3">
+                              {editableDescription.bullets.map((bullet, i) => (
+                                <li key={i}>• {bullet}</li>
+                              ))}
+                            </ul>
+                          )}
+                          <p>{editableDescription.closing}</p>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </CardContent>

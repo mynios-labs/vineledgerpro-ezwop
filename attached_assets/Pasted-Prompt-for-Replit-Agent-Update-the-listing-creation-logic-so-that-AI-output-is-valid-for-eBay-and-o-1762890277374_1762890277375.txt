@@ -1,0 +1,79 @@
+Prompt for Replit Agent
+
+Update the listing creation logic so that AI output is valid for eBay and optimized:
+
+Title generation
+
+Add a function generateEbayTitle(vineItem) that:
+
+Uses the product name, brand, key features, and high intent keywords.
+
+Strictly enforces eBay's 80 character limit for title (truncate intelligently at word boundaries).
+
+Avoids spammy phrases and all caps, but keeps it compelling.
+
+Example style: Hands-Free 2-Gallon Auto-Fill Dog Water Bowl, Stainless, Outdoor Safe.
+
+Validate the title before calling the eBay API. If length is 0 or greater than 80, show a clear UI error and do not send the request.
+
+Ensure the generated title is editable in the UI so the seller can tweak it before publishing.
+
+Description generation
+
+Add a function generateEbayDescription(vineItem) that:
+
+Produces a structured, human readable description with:
+
+A short benefit-focused intro paragraph.
+
+4 to 7 bullet points for key features (size, material, use case, who it is for).
+
+A short closing line reinforcing value.
+
+Uses line breaks and bullet formatting so the preview in our UI and eBay is easy to scan.
+
+Includes relevant search keywords naturally (brand, model, use case, audience).
+
+Keeps out Vine references or any mention of how the item was acquired.
+
+Show the description in a multiline editor so the seller can edit it before publishing.
+
+Category selection (critical)
+
+Implement automatic category suggestion instead of defaulting to "Other":
+
+Use eBay's Taxonomy or Browse API to get category suggestions from:
+
+The AI generated title
+
+The product type / attributes in the Vine data
+
+Pick the top relevant categoryId as the default.
+
+Show the chosen category in the UI with a dropdown or search box so the seller can override.
+
+When creating inventory items / offers, always send the chosen categoryId instead of a hardcoded "Other".
+
+Preview behavior
+
+The "eBay Preview" card must always reflect:
+
+Final title (after 80-char validation)
+
+Final description
+
+Selected category
+
+Price and shipping choice
+
+If any of these are invalid for eBay (title too long, missing category), show a clear validation message before calling the eBay API.
+
+Error handling
+
+When eBay returns a 400 error with invalid value for title or similar:
+
+Surface the exact eBay message in the UI in a readable way.
+
+Highlight the offending field (title, category, etc).
+
+Do not partially create records in our database if publish failed.

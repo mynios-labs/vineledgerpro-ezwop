@@ -38,6 +38,48 @@ import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Helper: Truncate title to eBay's 80-char limit at word boundaries
+function truncateTitle(title: string, maxLength: number = 80): string {
+  if (title.length <= maxLength) return title;
+  
+  // Find last space before maxLength
+  const truncated = title.substring(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ');
+  
+  // If there's a space, cut there; otherwise cut at maxLength
+  return lastSpace > 0 ? truncated.substring(0, lastSpace) : truncated;
+}
+
+// Helper: Validate eBay listing requirements
+function validateListingData(data: {
+  title: string;
+  description: string;
+  categoryId: string;
+  photos?: number;
+}): string[] {
+  const errors: string[] = [];
+  
+  if (!data.title || data.title.trim().length === 0) {
+    errors.push("Title is required");
+  } else if (data.title.length > 80) {
+    errors.push(`Title is too long (${data.title.length}/80 chars)`);
+  }
+  
+  if (!data.description || data.description.trim().length === 0) {
+    errors.push("Description is required");
+  }
+  
+  if (!data.categoryId || data.categoryId === "0") {
+    errors.push("Valid category is required");
+  }
+  
+  if (data.photos !== undefined && data.photos < 2) {
+    errors.push("At least 2 photos are required");
+  }
+  
+  return errors;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get vine items stats
   app.get("/api/vine-items/stats", async (_req, res) => {
@@ -721,20 +763,22 @@ Each title MUST:
 - Include key specs naturally (e.g., "18-inch" → "Large", "4-speed" → "Adjustable Speed")
 - Sound natural, specific, and buyer-focused - like a real person selling their item
 
-Create 1 description (4-6 sentences):
-- Open with a benefit statement that solves a buyer problem
-- List 3-4 key features with emotional appeal
-- Include use cases and scenarios
-${basisPrice > 0 ? '- Include the value comparison statement about typical retail price vs your price\n' : ''}- End with a call-to-action or confidence statement
-- Make it exciting and persuasive, not just factual
-
+Create 1 STRUCTURED description with these exact parts:
+- "intro": One benefit-focused opening paragraph (2-3 sentences) that solves a buyer problem
+- "bullets": Array of 4-7 key feature bullets (each 1 sentence, focus on specs, benefits, use cases)
+  Examples: "18-inch diameter provides powerful airflow for large rooms"
+           "Adjustable height from 38 to 54 inches for customized comfort"
+           "Durable metal construction withstands outdoor conditions"
+- "closing": One confident closing sentence with call-to-action
+${basisPrice > 0 ? '- Include the value comparison in intro or bullets about typical retail price\n' : ''}
 STRICT RULES:
 - NEVER mention: Amazon, Vine, review, promo, free sample, received, promotional, ASIN
 - Reword everything - don't copy phrases from original
 - Sound like a professional seller, not a reviewer
+- Make bullets scannable and benefit-focused, not just features
 
 Output ONLY this JSON structure (no markdown, no backticks):
-{"titles": ["title 1", "title 2", "title 3"], "description": "compelling description"}`,
+{"titles": ["title 1", "title 2", "title 3"], "description": {"intro": "opening paragraph", "bullets": ["bullet 1", "bullet 2", "bullet 3", "bullet 4"], "closing": "closing sentence"}}`,
           },
         ],
         max_completion_tokens: 2500,
@@ -807,9 +851,30 @@ Output only JSON:
         }
       }
 
+      // Truncate titles to 80 chars and track original lengths
+      const truncatedTitles = (generated.titles || [item.titleNorm]).map((title: string) => truncateTitle(title, 80));
+      const originalTitleLengths = (generated.titles || [item.titleNorm]).map((title: string) => title.length);
+
+      // Normalize description to structured format if it's a string
+      let structuredDescription;
+      if (typeof generated.description === 'string') {
+        // Legacy format: convert to structured
+        structuredDescription = {
+          intro: generated.description,
+          bullets: [],
+          closing: "Order now with confidence!"
+        };
+      } else {
+        structuredDescription = generated.description || {
+          intro: item.titleNorm,
+          bullets: [],
+          closing: "Order now!"
+        };
+      }
+
       // Privacy checks
       const privacyWarnings: string[] = [];
-      for (const title of generated.titles || []) {
+      for (const title of truncatedTitles) {
         const violations = checkForbiddenWords(title);
         if (violations.length > 0) {
           privacyWarnings.push(`Title contains forbidden words: ${violations.join(", ")}`);
@@ -819,22 +884,52 @@ Output only JSON:
         }
       }
 
-      const descViolations = checkForbiddenWords(generated.description || "");
+      // Check description parts for privacy violations
+      const allDescText = [
+        structuredDescription.intro,
+        ...structuredDescription.bullets,
+        structuredDescription.closing
+      ].join(' ');
+      const descViolations = checkForbiddenWords(allDescText);
       if (descViolations.length > 0) {
         privacyWarnings.push(`Description contains forbidden words: ${descViolations.join(", ")}`);
       }
 
       // Similarity check
-      const similarityScore = calculateSimilarity(item.titleNorm, generated.titles?.[0] || "");
+      const similarityScore = calculateSimilarity(item.titleNorm, truncatedTitles[0] || "");
 
       res.json({
-        titles: generated.titles || [item.titleNorm, item.titleNorm, item.titleNorm],
-        description: generated.description || item.titleNorm,
+        titles: truncatedTitles,
+        originalTitleLengths,
+        description: structuredDescription,
         categoryId: suggestedCategory.category.categoryId,
         categoryName: suggestedCategory.category.categoryName,
         privacyWarnings,
         similarityScore,
       });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Search eBay categories by keyword
+  app.get("/api/ebay/categories", async (req, res) => {
+    try {
+      const { q } = req.query;
+      
+      if (!q || typeof q !== 'string') {
+        return res.status(400).json({ error: "Search query required" });
+      }
+
+      const categories = await getSuggestedCategories(q);
+      
+      // Format for easy consumption
+      const formatted = (categories.categorySuggestions || []).map((suggestion: any) => ({
+        categoryId: suggestion.category.categoryId,
+        categoryName: suggestion.category.categoryName,
+      }));
+
+      res.json(formatted);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -980,8 +1075,26 @@ Output only JSON:
         dimsH,
       } = req.body;
 
-      if (!req.files || (req.files as Express.Multer.File[]).length < 2) {
-        return res.status(400).json({ error: "At least 2 photos required" });
+      // Validate all required fields before processing
+      const photoCount = (req.files as Express.Multer.File[])?.length || 0;
+      const validationErrors = validateListingData({
+        title,
+        description,
+        categoryId,
+        photos: photoCount,
+      });
+
+      if (validationErrors.length > 0) {
+        return res.status(400).json({ 
+          error: "Validation failed",
+          details: validationErrors,
+          fieldErrors: {
+            title: validationErrors.find(e => e.includes("Title")),
+            description: validationErrors.find(e => e.includes("Description")),
+            categoryId: validationErrors.find(e => e.includes("category")),
+            photos: validationErrors.find(e => e.includes("photos")),
+          }
+        });
       }
 
       // Process photos - strip EXIF
@@ -1134,7 +1247,30 @@ Output only JSON:
 
       res.json({ listing, ebayListingId: published.listingId });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("[Publish] Error:", error.message);
+      
+      // Parse eBay API errors for field-level details
+      let ebayErrors: any = {};
+      try {
+        const errorData = JSON.parse(error.message.split(' - ')[1] || '{}');
+        if (errorData.errors) {
+          errorData.errors.forEach((err: any) => {
+            const field = err.parameters?.[0]?.name || 'unknown';
+            ebayErrors[field] = err.message;
+          });
+        }
+      } catch (parseError) {
+        // Error message not parseable - use as-is
+      }
+
+      const hasFieldErrors = Object.keys(ebayErrors).length > 0;
+      res.status(400).json({ 
+        error: hasFieldErrors ? "eBay validation failed" : error.message,
+        ebayErrors: hasFieldErrors ? ebayErrors : undefined,
+        details: hasFieldErrors ? 
+          Object.entries(ebayErrors).map(([field, msg]) => `${field}: ${msg}`) :
+          [error.message]
+      });
     }
   });
 
