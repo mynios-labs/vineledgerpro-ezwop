@@ -1,0 +1,59 @@
+Good catch on calling that out. You already have valid eBay business policies, so the problem is not “you forgot to make one,” the problem is “the app is not actually using the one you made.”
+
+Here is what the error means in your situation:
+
+eBay sees an offer that either has no fulfillmentPolicyId attached, or has an ID that does not match a valid shipping policy for your production account.
+
+Your “Free Domestic Shipping” policy (with UPS services configured) is correct, but the app is almost certainly referencing:
+
+a hardcoded or placeholder ID
+
+or a sandbox policy ID
+
+or nothing at all, assuming “default” when eBay has no usable default
+
+So, we tune the instruction to Replit Agent based on the fact that real policies exist.
+
+Replit Agent: precise instructions
+
+Use this, nothing extra:
+
+Problem: eBay is still rejecting listings with: “invalid data in the associated Fulfilment policy. Please add at least one valid shipping service option.” I already have a valid Shipping policy (Free Domestic Shipping) in my production eBay account. The app UI shows "Free shipping," but the offer being sent to eBay is not correctly linked to that live policy.
+
+What to fix:
+
+Read my real eBay policies
+
+Use the production credentials to call the official Fulfillment Policy API.
+
+Confirm you can list my existing policies (including Free Domestic Shipping).
+
+Wire a real policy into publish
+
+When creating an offer, always send a real fulfillmentPolicyId from that list.
+
+Stop using any hardcoded ID, sandbox ID, or null/undefined value.
+
+For now, default to my Free Domestic Shipping policy if present, and make that explicit.
+
+Add a clear selector in the Draft page
+
+Show the available fulfillment policies by name.
+
+Let me choose which one to use for this listing.
+
+The ID from this selector must be the exact one sent as fulfillmentPolicyId in the offer.
+
+Validate before calling eBay
+
+If no fulfillment policy is selected or resolved to a real ID, block publish.
+
+Show a clear message in the Shipping section: “Select a valid eBay shipping policy for this listing.”
+
+Surface real errors
+
+If eBay still returns a fulfillment policy error, show which policy ID was used and the message next to the Shipping/Policy selector, not as a generic blob.
+
+Summary: you must hook my existing production shipping policy into the offer creation. Use the IDs from eBay’s own API, require one to be selected, and send that exact ID so eBay recognizes at least one valid shipping service.
+
+Once they do this, your existing “Free Domestic Shipping” policy will actually be attached to the listing and that particular error should die.
