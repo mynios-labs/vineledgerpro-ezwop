@@ -35,6 +35,7 @@ export default function DraftPage() {
   const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
+  const [priceInputMode, setPriceInputMode] = useState<"item" | "total">("item");
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -434,7 +435,10 @@ export default function DraftPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
 
+          {/* Right Column - Pricing & Preview */}
+          <div className="space-y-6">
             {/* Pricing & Shipping */}
             <Card>
               <CardHeader>
@@ -449,16 +453,64 @@ export default function DraftPage() {
                 </Alert>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Item Price ($)</Label>
-                    <Input
-                      id="price"
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      data-testid="input-price"
-                    />
+                    {shippingMode === "included" && shippingEstimate ? (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="price">{priceInputMode === "item" ? "Item Price ($)" : "Total Price ($)"}</Label>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            onClick={() => setPriceInputMode(priceInputMode === "item" ? "total" : "item")}
+                            data-testid="button-toggle-price-mode"
+                          >
+                            Switch to {priceInputMode === "item" ? "Total" : "Item"}
+                          </Button>
+                        </div>
+                        <Input
+                          id="price"
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={priceInputMode === "total" && price ? (parseFloat(price) + shippingEstimate.high).toFixed(2) : price}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (priceInputMode === "total" && val) {
+                              // User entered total, calculate item price
+                              const total = parseFloat(val);
+                              const itemPrice = Math.max(0, total - shippingEstimate.high);
+                              setPrice(itemPrice.toFixed(2));
+                            } else {
+                              setPrice(val);
+                            }
+                          }}
+                          data-testid="input-price"
+                        />
+                        {priceInputMode === "total" && price && (
+                          <div className="text-xs text-muted-foreground">
+                            Item: ${parseFloat(price).toFixed(2)} + Ship: ${shippingEstimate.high.toFixed(2)}
+                          </div>
+                        )}
+                        {priceInputMode === "item" && price && (
+                          <div className="text-xs text-muted-foreground">
+                            Total: ${(parseFloat(price) + shippingEstimate.high).toFixed(2)}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Label htmlFor="price">Item Price ($)</Label>
+                        <Input
+                          id="price"
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={price}
+                          onChange={(e) => setPrice(e.target.value)}
+                          data-testid="input-price"
+                        />
+                      </>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="weight">Weight (oz)</Label>
@@ -571,10 +623,8 @@ export default function DraftPage() {
                 )}
               </CardContent>
             </Card>
-          </div>
 
-          {/* Right Column - Preview */}
-          <div className="lg:sticky lg:top-6 lg:h-fit">
+            {/* eBay Preview */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">eBay Preview</CardTitle>
@@ -594,7 +644,16 @@ export default function DraftPage() {
                       </h3>
                       {price && (
                         <div className="text-2xl font-bold text-chart-1" data-testid="text-preview-price">
-                          ${parseFloat(price).toFixed(2)}
+                          {shippingMode === "included" && shippingEstimate ? (
+                            <>
+                              ${(parseFloat(price) + shippingEstimate.high).toFixed(2)}
+                              <div className="text-xs text-muted-foreground font-normal mt-1">
+                                Free shipping
+                              </div>
+                            </>
+                          ) : (
+                            `$${parseFloat(price).toFixed(2)}`
+                          )}
                         </div>
                       )}
                     </div>
