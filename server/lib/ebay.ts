@@ -132,6 +132,45 @@ export async function getSuggestedCategories(keywords: string): Promise<any> {
   return response.json();
 }
 
+export async function getCategoryDetails(categoryId: string): Promise<any> {
+  const token = await getAccessToken();
+  
+  const response = await fetch(
+    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/0/get_category_subtree?category_id=${categoryId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to get category details: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function isLeafCategory(categoryId: string): Promise<boolean> {
+  try {
+    const details = await getCategoryDetails(categoryId);
+    // eBay API returns data nested under categorySubtreeNode
+    const subtree = details.categorySubtreeNode;
+    if (!subtree) {
+      console.error(`[eBay] Category ${categoryId} has no subtree node`);
+      return false;
+    }
+    // A leaf category has no child categories
+    const isLeaf = !subtree.childCategoryTreeNodes || subtree.childCategoryTreeNodes.length === 0;
+    console.log(`[eBay] Category ${categoryId} (${subtree.category?.categoryName}) is ${isLeaf ? 'LEAF' : 'NON-LEAF'}`);
+    return isLeaf;
+  } catch (error) {
+    console.error(`[eBay] Failed to check if category ${categoryId} is leaf:`, error);
+    return false;
+  }
+}
+
 export async function createOrUpdateInventoryItem(sku: string, item: any): Promise<void> {
   const token = await getAccessToken();
 

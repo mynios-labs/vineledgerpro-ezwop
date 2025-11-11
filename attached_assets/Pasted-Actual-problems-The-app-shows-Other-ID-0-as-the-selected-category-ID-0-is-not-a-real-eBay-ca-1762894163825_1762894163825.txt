@@ -1,0 +1,93 @@
+Actual problems
+
+The app shows “Other / ID: 0” as the selected category.
+
+ID 0 is not a real eBay category.
+
+Backend correctly refuses to publish and shows “Please select a valid category.”
+
+So the default “AI category” is fake and breaks publishing.
+
+The category search box does not work.
+
+Typing does nothing.
+
+You cannot pick a proper category, so you are stuck.
+
+The AI is not truly selecting a category for you.
+
+It generates copy, but category is left as that broken default.
+
+You want AI to pick a real eBay category automatically, not give hints or require extra steps.
+
+Only one category should be used.
+
+Supporting multiple categories is unnecessary confusion for this app.
+
+The eBay calls should use one clear primary categoryId.
+
+You want one coherent AI flow.
+
+For each draft: a single AI step that generates title, description, and the chosen category.
+
+No multiple scattered AI calls that can fall out of sync.
+
+That is the entire situation.
+
+Replit Agent instruction (non-technical, direct)
+
+Use this as-is:
+
+Here are the concrete issues to fix in the Draft Listing experience:
+
+Remove the fake "Other / ID: 0" category.
+
+Do not treat "Other" or ID 0 as a valid category.
+
+If there is no real category yet, show "No category selected" and require one before publish.
+
+AI must choose a real eBay category automatically.
+
+When generating the listing (titles + description), also choose one actual eBay category for this item.
+
+Use the item details and AI generated title to pick that category from eBay's category system.
+
+Save that real categoryId and name with the draft.
+
+This should happen in the same flow as the AI copy generation, not as a separate random step.
+
+Make the category visible and editable.
+
+On the Draft page, show the selected category from step 2.
+
+Add a working category search box that:
+
+Shows real eBay category suggestions as I type.
+
+Lets me click one to replace the selected category.
+
+Whatever is selected here is what should be sent when publishing.
+
+Require one valid category before publishing.
+
+When I click "Approve & Publish":
+
+If there is no valid categoryId, show a clear error on the Category section and do not call eBay.
+
+If there is a valid category, proceed.
+
+Only send one categoryId to eBay. Do not try multiple categories.
+
+Keep AI calls simple and unified.
+
+For each draft, use one AI call to produce:
+
+Title options
+
+Description
+
+The initial category choice
+
+Only call AI again if I click "Regenerate," and then update all three together.
+
+In short: stop using "Other / 0," have AI pick a real eBay category for me, let me override it with a working search, and block publish unless exactly one valid category is selected.

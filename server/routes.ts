@@ -32,7 +32,7 @@ import {
   insertEbay1099Schema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
-import { getSuggestedCategories, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation } from "./lib/ebay";
+import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 
@@ -719,11 +719,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Item not found" });
       }
 
-      // Get eBay category suggestions
-      const categories = await getSuggestedCategories(item.titleNorm);
-      const suggestedCategory = categories.categorySuggestions?.[0] || {
-        category: { categoryId: "0", categoryName: "Other" },
-      };
+      // Get eBay category suggestions and find a valid leaf category
+      let suggestedCategory: { category: { categoryId: string, categoryName: string } } | null = null;
+      
+      // Step 1: Try eBay category suggestions with original title
+      try {
+        const categories = await getSuggestedCategories(item.titleNorm);
+        if (categories.categorySuggestions && categories.categorySuggestions.length > 0) {
+          // Find first leaf category in the results
+          for (const cat of categories.categorySuggestions) {
+            const isLeaf = await isLeafCategory(cat.category.categoryId);
+            if (isLeaf) {
+              suggestedCategory = cat;
+              console.log("[AI Generation] Found leaf category from eBay:", cat.category);
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[AI Generation] eBay category suggestion failed:", error);
+      }
+      
+      // Step 2: If no leaf category found, use AI to generate better search keywords
+      if (!suggestedCategory) {
+        console.log("[AI Generation] No leaf category found, asking AI for better keywords");
+        try {
+          const keywordCompletion = await openai.chat.completions.create({
+            model: "gpt-4.1-mini",
+            messages: [
+              {
+                role: "system",
+                content: "You are a product categorization expert. Extract the most specific product type, brand, and key features from a title. Output only valid JSON.",
+              },
+              {
+                role: "user",
+                content: `From this product title: "${item.titleNorm}"
+
+Extract keywords for eBay category search. Focus on:
+- Specific product type (e.g., "automatic dog water dispenser" not just "pet product")
+- Brand name if present
+- Key distinguishing features
+
+Output ONLY this JSON (no markdown):
+{"keywords": "specific search keywords here"}`,
+              },
+            ],
+            max_completion_tokens: 100,
+          });
+
+          const keywordContent = keywordCompletion.choices[0].message.content || "";
+          const keywordData = JSON.parse(keywordContent.trim().replace(/^```json?\s*/, '').replace(/\s*```$/, ''));
+          
+          if (keywordData.keywords) {
+            console.log("[AI Generation] AI-generated keywords:", keywordData.keywords);
+            
+            // Try eBay again with AI-generated keywords
+            const categories = await getSuggestedCategories(keywordData.keywords);
+            if (categories.categorySuggestions && categories.categorySuggestions.length > 0) {
+              for (const cat of categories.categorySuggestions) {
+                const isLeaf = await isLeafCategory(cat.category.categoryId);
+                if (isLeaf) {
+                  suggestedCategory = cat;
+                  console.log("[AI Generation] Found leaf category with AI keywords:", cat.category);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (aiError) {
+          console.error("[AI Generation] AI keyword generation failed:", aiError);
+        }
+      }
+      
+      // Step 3: If still no category, return error
+      if (!suggestedCategory) {
+        return res.status(502).json({ 
+          error: "Unable to find a valid eBay category for this product. Please try selecting a category manually or contact support." 
+        });
+      }
 
       // Generate unique titles and description using AI
       // Using gpt-4.1-mini for cost efficiency - produces excellent eBay-friendly copy
