@@ -709,16 +709,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 Original product: "${item.titleNorm}"${valueMessage}
 
-Create 3 DISTINCT titles (max 80 chars each):
-1. Title emphasizing QUALITY/PREMIUM (use synonyms: superior, elite, top-tier, exceptional, finest)
-2. Title emphasizing FEATURES/TECH (use synonyms: innovative, cutting-edge, versatile, multi-function)
-3. Title emphasizing BENEFITS/VALUE (use synonyms: reliable, essential, practical, affordable, trusted)
+Create 3 DISTINCT titles (max 80 chars each) with different creative approaches:
+1. One emphasizing QUALITY/CRAFTSMANSHIP - focus on build, materials, durability
+2. One emphasizing KEY FEATURES/FUNCTIONALITY - highlight what it does, unique capabilities
+3. One emphasizing BUYER BENEFITS/USE CASES - focus on results, convenience, value
 
 Each title MUST:
-- Use COMPLETELY DIFFERENT wording and structure
-- Rephrase the product type (e.g., "Floor Fan" → "Air Circulator", "Cooling Unit", "Ventilation System")
-- Include key specs in natural language (e.g., "18-inch" → "Large", "4-speed" → "Variable Speed")
-- Sound natural and buyer-focused
+- Use COMPLETELY DIFFERENT wording and structure from each other AND the original
+- Be creative and varied - avoid generic marketing words like "superior", "innovative", "reliable"
+- Rephrase the product type creatively (e.g., "Floor Fan" → "Air Circulator", "Cooling Unit", "Breeze Maker")
+- Include key specs naturally (e.g., "18-inch" → "Large", "4-speed" → "Adjustable Speed")
+- Sound natural, specific, and buyer-focused - like a real person selling their item
 
 Create 1 description (4-6 sentences):
 - Open with a benefit statement that solves a buyer problem
