@@ -1006,7 +1006,7 @@ Output only JSON:
         })
         .returning();
 
-      // Create inventory item
+      // Upsert inventory item (update if exists, insert if new)
       const [inventoryItem] = await db
         .insert(inventoryItems)
         .values({
@@ -1018,6 +1018,18 @@ Output only JSON:
           dimsInW: parseInt(dimsW),
           dimsInH: parseInt(dimsH),
           privacyPassed: true,
+        })
+        .onConflictDoUpdate({
+          target: inventoryItems.vineItemId,
+          set: {
+            condition: "New",
+            photoSetId: photoSet.photoSetId,
+            weightOz: parseInt(weightOz),
+            dimsInL: parseInt(dimsL),
+            dimsInW: parseInt(dimsW),
+            dimsInH: parseInt(dimsH),
+            privacyPassed: true,
+          },
         })
         .returning();
 
@@ -1059,20 +1071,47 @@ Output only JSON:
 
       const published = await publishOffer(offer.offerId);
 
-      // Create listing record
-      const [listing] = await db
-        .insert(listings)
-        .values({
-          inventoryId: inventoryItem.inventoryId,
-          ebayItemId: published.listingId,
-          categoryId,
-          title,
-          description,
-          priceCents: parseInt(priceCents),
-          publishedAt: new Date(),
-          state: "live",
-        })
-        .returning();
+      // Check if listing already exists for this inventory item
+      const existingListing = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.inventoryId, inventoryItem.inventoryId))
+        .limit(1);
+
+      let listing;
+      if (existingListing.length > 0) {
+        // Update existing listing
+        const [updated] = await db
+          .update(listings)
+          .set({
+            ebayItemId: published.listingId,
+            categoryId,
+            title,
+            description,
+            priceCents: parseInt(priceCents),
+            publishedAt: new Date(),
+            state: "live",
+          })
+          .where(eq(listings.listingId, existingListing[0].listingId))
+          .returning();
+        listing = updated;
+      } else {
+        // Create new listing record
+        const [created] = await db
+          .insert(listings)
+          .values({
+            inventoryId: inventoryItem.inventoryId,
+            ebayItemId: published.listingId,
+            categoryId,
+            title,
+            description,
+            priceCents: parseInt(priceCents),
+            publishedAt: new Date(),
+            state: "live",
+          })
+          .returning();
+        listing = created;
+      }
 
       // Update vine item status
       await db

@@ -35,7 +35,6 @@ export default function DraftPage() {
   const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
-  const [priceInputMode, setPriceInputMode] = useState<"item" | "total">("item");
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -451,79 +450,91 @@ export default function DraftPage() {
                     <strong>Dimensions not recorded.</strong> Please enter weight and dimensions manually to calculate shipping.
                   </AlertDescription>
                 </Alert>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    {shippingMode === "included" && shippingEstimate ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor="price">{priceInputMode === "item" ? "Item Price ($)" : "Total Price ($)"}</Label>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 text-xs"
-                            onClick={() => setPriceInputMode(priceInputMode === "item" ? "total" : "item")}
-                            data-testid="button-toggle-price-mode"
-                          >
-                            Switch to {priceInputMode === "item" ? "Total" : "Item"}
-                          </Button>
-                        </div>
+                {shippingMode === "included" && shippingEstimate ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="item-price">Item Price ($)</Label>
                         <Input
-                          id="price"
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={priceInputMode === "total" && price ? (parseFloat(price) + shippingEstimate.high).toFixed(2) : price}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (priceInputMode === "total" && val) {
-                              // User entered total, calculate item price
-                              const total = parseFloat(val);
-                              const itemPrice = Math.max(0, total - shippingEstimate.high);
-                              setPrice(itemPrice.toFixed(2));
-                            } else {
-                              setPrice(val);
-                            }
-                          }}
-                          data-testid="input-price"
-                        />
-                        {priceInputMode === "total" && price && (
-                          <div className="text-xs text-muted-foreground">
-                            Item: ${parseFloat(price).toFixed(2)} + Ship: ${shippingEstimate.high.toFixed(2)}
-                          </div>
-                        )}
-                        {priceInputMode === "item" && price && (
-                          <div className="text-xs text-muted-foreground">
-                            Total: ${(parseFloat(price) + shippingEstimate.high).toFixed(2)}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <Label htmlFor="price">Item Price ($)</Label>
-                        <Input
-                          id="price"
+                          id="item-price"
                           type="number"
                           step="0.01"
                           placeholder="0.00"
                           value={price}
-                          onChange={(e) => setPrice(e.target.value)}
-                          data-testid="input-price"
+                          onChange={(e) => {
+                            setPrice(e.target.value);
+                          }}
+                          data-testid="input-item-price"
                         />
-                      </>
-                    )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="total-price">Total Price ($)</Label>
+                        <Input
+                          id="total-price"
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={price ? (parseFloat(price) + shippingEstimate.high).toFixed(2) : ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val) {
+                              const total = parseFloat(val);
+                              const itemPrice = Math.max(0, total - shippingEstimate.high);
+                              setPrice(itemPrice.toFixed(2));
+                            } else {
+                              setPrice('');
+                            }
+                          }}
+                          data-testid="input-total-price"
+                        />
+                        {price && (
+                          <div className="text-xs text-muted-foreground">
+                            Item ${parseFloat(price).toFixed(2)} + Ship ${shippingEstimate.high.toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="weight">Weight (oz)</Label>
+                        <Input
+                          id="weight"
+                          type="number"
+                          placeholder="0"
+                          value={weightOz}
+                          onChange={(e) => setWeightOz(e.target.value)}
+                          data-testid="input-weight"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="price">Item Price ($)</Label>
+                      <Input
+                        id="price"
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        data-testid="input-price"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="weight">Weight (oz)</Label>
+                      <Input
+                        id="weight"
+                        type="number"
+                        placeholder="0"
+                        value={weightOz}
+                        onChange={(e) => setWeightOz(e.target.value)}
+                        data-testid="input-weight"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="weight">Weight (oz)</Label>
-                    <Input
-                      id="weight"
-                      type="number"
-                      placeholder="0"
-                      value={weightOz}
-                      onChange={(e) => setWeightOz(e.target.value)}
-                      data-testid="input-weight"
-                    />
-                  </div>
-                </div>
+                )}
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="dims-l">Length (in)</Label>
