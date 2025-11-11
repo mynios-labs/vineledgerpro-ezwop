@@ -61,6 +61,8 @@ export default function DraftPage() {
   const [debouncedCategorySearch, setDebouncedCategorySearch] = useState<string>("");
   const [userOverrodeCategory, setUserOverrodeCategory] = useState<boolean>(false);
   const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
+  const [selectedFulfillmentPolicyId, setSelectedFulfillmentPolicyId] = useState<string | null>(null);
+  const [selectedFulfillmentPolicyName, setSelectedFulfillmentPolicyName] = useState<string | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -86,13 +88,40 @@ export default function DraftPage() {
     staleTime: 0,
   });
 
-  // Reset category state when switching to a different item
+  // Reset category and fulfillment policy state when switching to a different item
   useEffect(() => {
     setSelectedCategoryId(null);
     setSelectedCategoryName(null);
     setUserOverrodeCategory(false);
     setCategorySearch("");
+    setSelectedFulfillmentPolicyId(null);
+    setSelectedFulfillmentPolicyName(null);
   }, [vineItemId, listingId]);
+
+  // Auto-select fulfillment policy if only one available
+  useEffect(() => {
+    if (fulfillmentPolicies && fulfillmentPolicies.length === 1 && !selectedFulfillmentPolicyId) {
+      setSelectedFulfillmentPolicyId(fulfillmentPolicies[0].fulfillmentPolicyId);
+      setSelectedFulfillmentPolicyName(fulfillmentPolicies[0].name);
+    }
+  }, [fulfillmentPolicies, selectedFulfillmentPolicyId]);
+
+  // Load stored fulfillment policy ID if editing an existing listing
+  useEffect(() => {
+    if (listing && listing.fulfillmentPolicyId && !selectedFulfillmentPolicyId) {
+      setSelectedFulfillmentPolicyId(listing.fulfillmentPolicyId);
+    }
+  }, [listing, selectedFulfillmentPolicyId]);
+
+  // Hydrate fulfillment policy name once policies are loaded and ID is set
+  useEffect(() => {
+    if (selectedFulfillmentPolicyId && fulfillmentPolicies && !selectedFulfillmentPolicyName) {
+      const policy = fulfillmentPolicies.find(p => p.fulfillmentPolicyId === selectedFulfillmentPolicyId);
+      if (policy) {
+        setSelectedFulfillmentPolicyName(policy.name);
+      }
+    }
+  }, [selectedFulfillmentPolicyId, fulfillmentPolicies, selectedFulfillmentPolicyName]);
 
   // Debounce category search (300ms delay)
   useEffect(() => {
@@ -107,6 +136,16 @@ export default function DraftPage() {
     queryKey: [`/api/ebay/categories?q=${debouncedCategorySearch}`],
     enabled: debouncedCategorySearch.length > 2,
     staleTime: 60000, // Cache for 1 minute
+  });
+
+  // Fulfillment policies
+  const { data: fulfillmentPolicies, isLoading: loadingPolicies, error: policiesError } = useQuery<Array<{
+    fulfillmentPolicyId: string;
+    name: string;
+    shippingOptions?: Array<{ shippingServiceCode?: string }>;
+  }>>({
+    queryKey: ["/api/ebay/fulfillment-policies"],
+    staleTime: 15 * 60 * 1000, // 15 minutes (matches backend cache)
   });
 
   // Initialize editable titles when suggestions load (only once or on regenerate)
@@ -219,12 +258,17 @@ export default function DraftPage() {
         throw new Error("Please select a valid category");
       }
 
+      if (!selectedFulfillmentPolicyId) {
+        throw new Error("Please select a fulfillment policy");
+      }
+
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
       formData.append("title", editableTitles[selectedTitle]);
       formData.append("description", serializeDescription(editableDescription));
       formData.append("categoryId", selectedCategoryId);
+      formData.append("fulfillmentPolicyId", selectedFulfillmentPolicyId);
       formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
       formData.append("weightOz", weightOz);
       formData.append("dimsL", dimsL);
@@ -395,6 +439,73 @@ export default function DraftPage() {
                       </div>
                     )}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Fulfillment Policy Selector */}
+            {vineItem && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Fulfillment Policy</CardTitle>
+                  <CardDescription>Select shipping policy for this listing</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {loadingPolicies && (
+                    <div className="border rounded-lg p-3 text-center text-sm text-muted-foreground">
+                      <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
+                      Loading policies...
+                    </div>
+                  )}
+                  {policiesError && (
+                    <div className="border border-destructive/50 rounded-lg p-3 text-center text-sm text-destructive">
+                      <AlertTriangle className="w-4 h-4 inline mr-2" />
+                      Failed to load policies. Please refresh the page.
+                    </div>
+                  )}
+                  {!loadingPolicies && !policiesError && (!fulfillmentPolicies || fulfillmentPolicies.length === 0) && (
+                    <div className="border border-destructive/50 rounded-lg p-3 text-center text-sm text-destructive">
+                      <AlertTriangle className="w-4 h-4 inline mr-2" />
+                      No fulfillment policies found. Please create one in eBay Seller Hub.
+                    </div>
+                  )}
+                  {!loadingPolicies && !policiesError && fulfillmentPolicies && fulfillmentPolicies.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Selected Policy</Label>
+                      <Select
+                        value={selectedFulfillmentPolicyId || undefined}
+                        onValueChange={(value) => {
+                          setSelectedFulfillmentPolicyId(value);
+                          const policy = fulfillmentPolicies.find(p => p.fulfillmentPolicyId === value);
+                          setSelectedFulfillmentPolicyName(policy?.name || null);
+                        }}
+                      >
+                        <SelectTrigger data-testid="select-fulfillment-policy">
+                          <SelectValue placeholder="Choose fulfillment policy..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {fulfillmentPolicies.map((policy) => (
+                            <SelectItem 
+                              key={policy.fulfillmentPolicyId} 
+                              value={policy.fulfillmentPolicyId}
+                              data-testid={`option-policy-${policy.fulfillmentPolicyId}`}
+                            >
+                              {policy.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {selectedFulfillmentPolicyName && (
+                        <div className="flex items-center gap-2 p-3 rounded-lg border bg-muted/50">
+                          <CheckCircle className="w-4 h-4 text-chart-1 flex-shrink-0" />
+                          <div className="flex-1">
+                            <div className="font-medium text-sm" data-testid="text-policy">{selectedFulfillmentPolicyName}</div>
+                            <div className="text-xs text-muted-foreground">ID: {selectedFulfillmentPolicyId}</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
