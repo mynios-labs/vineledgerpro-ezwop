@@ -4,6 +4,14 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **Image Hosting for eBay Listings** (Nov 11): Fixed eBay image rejection errors by implementing proper HTTPS hosting
+  - **Root Cause**: eBay Inventory API rejects data URLs (base64-encoded images); requires publicly accessible HTTPS URLs
+  - **Solution**: Implemented filesystem-based image hosting with Express static serving
+  - **Image Uploader Service**: Created abstraction layer (`server/lib/imageUploader.ts`) for future migration to eBay Picture Services or CDN
+  - **URL Validation**: Pre-publish checks ensure all image URLs are non-empty and start with http:// or https://
+  - **Storage**: Images saved to `uploads/` directory (gitignored) with SHA-256 hash-based filenames for deduplication
+  - **Public URLs**: Images served via `/uploads/{hash}.jpg` route accessible at `https://{domain}/uploads/{hash}.jpg`
+  - **Future**: Migration path planned to eBay Picture Services for production resilience
 - **eBay Category Search Authentication Fix** (Nov 11): Fixed 403 Forbidden errors in category search
   - **Root Cause**: Taxonomy API requires client credentials token (basic oauth scope), not user refresh token (sell.* scopes)
   - **Solution**: Created `getPublicAccessToken()` function with separate token cache for public APIs
