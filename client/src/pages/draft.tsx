@@ -35,6 +35,7 @@ export default function DraftPage() {
   const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
+  const [totalPriceInput, setTotalPriceInput] = useState("");
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -107,6 +108,14 @@ export default function DraftPage() {
     const timeoutId = setTimeout(fetchShippingEstimate, 500);
     return () => clearTimeout(timeoutId);
   }, [weightOz, dimsL, dimsW, dimsH]);
+
+  // Sync total price input when item price or shipping estimate changes
+  useEffect(() => {
+    if (shippingMode === "included" && price && shippingEstimate) {
+      const total = parseFloat(price) + shippingEstimate.high;
+      setTotalPriceInput(total.toFixed(2));
+    }
+  }, [price, shippingEstimate, shippingMode]);
 
   const regenerateTitles = () => {
     setEditableTitles([]); // Clear editable titles so they refresh
@@ -462,7 +471,16 @@ export default function DraftPage() {
                           placeholder="0.00"
                           value={price}
                           onChange={(e) => {
-                            setPrice(e.target.value);
+                            const val = e.target.value;
+                            setPrice(val);
+                            // Update total price when item price changes
+                            if (val && shippingEstimate) {
+                              const itemPrice = parseFloat(val);
+                              if (!isNaN(itemPrice)) {
+                                const total = itemPrice + shippingEstimate.high;
+                                setTotalPriceInput(total.toFixed(2));
+                              }
+                            }
                           }}
                           data-testid="input-item-price"
                         />
@@ -474,20 +492,23 @@ export default function DraftPage() {
                           type="number"
                           step="0.01"
                           placeholder="0.00"
-                          value={price ? (parseFloat(price) + shippingEstimate.high).toFixed(2) : ''}
+                          value={totalPriceInput}
                           onChange={(e) => {
+                            setTotalPriceInput(e.target.value);
+                          }}
+                          onBlur={(e) => {
                             const val = e.target.value;
-                            if (val) {
+                            if (val && shippingEstimate) {
                               const total = parseFloat(val);
-                              const itemPrice = Math.max(0, total - shippingEstimate.high);
-                              setPrice(itemPrice.toFixed(2));
-                            } else {
-                              setPrice('');
+                              if (!isNaN(total) && total >= 0) {
+                                const itemPrice = Math.max(0, total - shippingEstimate.high);
+                                setPrice(itemPrice.toFixed(2));
+                              }
                             }
                           }}
                           data-testid="input-total-price"
                         />
-                        {price && (
+                        {price && shippingEstimate && (
                           <div className="text-xs text-muted-foreground">
                             Item ${parseFloat(price).toFixed(2)} + Ship ${shippingEstimate.high.toFixed(2)}
                           </div>
