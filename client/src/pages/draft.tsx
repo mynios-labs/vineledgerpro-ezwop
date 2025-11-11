@@ -59,6 +59,7 @@ export default function DraftPage() {
   const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
   const [categorySearch, setCategorySearch] = useState<string>("");
   const [debouncedCategorySearch, setDebouncedCategorySearch] = useState<string>("");
+  const [userOverrodeCategory, setUserOverrodeCategory] = useState<boolean>(false);
   const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
@@ -84,6 +85,14 @@ export default function DraftPage() {
     enabled: !!vineItemId,
     staleTime: 0,
   });
+
+  // Reset category state when switching to a different item
+  useEffect(() => {
+    setSelectedCategoryId(null);
+    setSelectedCategoryName(null);
+    setUserOverrodeCategory(false);
+    setCategorySearch("");
+  }, [vineItemId, listingId]);
 
   // Debounce category search (300ms delay)
   useEffect(() => {
@@ -126,12 +135,13 @@ export default function DraftPage() {
   }, [titleSuggestions]);
 
   // Re-initialize category when regenerating (regenerateCount changes)
+  // Skip if user manually selected a category
   useEffect(() => {
-    if (regenerateCount > 0 && titleSuggestions) {
+    if (regenerateCount > 0 && titleSuggestions && !userOverrodeCategory) {
       setSelectedCategoryId(titleSuggestions.categoryId);
       setSelectedCategoryName(titleSuggestions.categoryName);
     }
-  }, [regenerateCount, titleSuggestions?.categoryId]);
+  }, [regenerateCount, titleSuggestions?.categoryId, userOverrodeCategory]);
 
   // Initialize editable description when suggestions load
   useEffect(() => {
@@ -368,6 +378,7 @@ export default function DraftPage() {
                               setSelectedCategoryId(cat.categoryId);
                               setSelectedCategoryName(cat.categoryName);
                               setCategorySearch("");
+                              setUserOverrodeCategory(true); // Mark as manually selected
                             }}
                             className="w-full p-2 text-left text-sm hover-elevate active-elevate-2 transition-colors"
                             data-testid={`button-select-category-${cat.categoryId}`}
