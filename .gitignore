@@ -19,3 +19,6 @@ logs/
 # Database
 *.db
 *.sqlite
+
+# Uploaded images
+uploads/

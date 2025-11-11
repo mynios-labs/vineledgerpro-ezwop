@@ -1199,7 +1199,7 @@ Output only JSON:
         });
       }
 
-      // Process photos - strip EXIF
+      // Process photos - strip EXIF and upload to public URLs
       const photoUrls: string[] = [];
       for (const file of req.files as Express.Multer.File[]) {
         const processed = await sharp(file.buffer)
@@ -1207,10 +1207,21 @@ Output only JSON:
           .jpeg({ quality: 90 })
           .toBuffer();
 
-        // In production, upload to a CDN or eBay Picture Services
-        // For now, create a data URL
-        const dataUrl = `data:image/jpeg;base64,${processed.toString("base64")}`;
-        photoUrls.push(dataUrl);
+        const { imageUploader } = await import("./lib/imageUploader");
+        const publicUrl = await imageUploader.upload(processed, "image/jpeg");
+        photoUrls.push(publicUrl);
+      }
+
+      // Validate all image URLs before calling eBay
+      const invalidUrls = photoUrls.filter(url => !url || (!url.startsWith("http://") && !url.startsWith("https://")));
+      if (invalidUrls.length > 0) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: ["One or more photo URLs are invalid. Photos must be publicly accessible."],
+          fieldErrors: {
+            photos: "One or more photos failed to upload. Please try again.",
+          }
+        });
       }
 
       // Create photo set
