@@ -55,9 +55,10 @@ export default function DraftPage() {
   const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
   const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
   const [totalPriceInput, setTotalPriceInput] = useState("");
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string>("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
   const [categorySearch, setCategorySearch] = useState<string>("");
+  const [debouncedCategorySearch, setDebouncedCategorySearch] = useState<string>("");
   const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
@@ -84,10 +85,18 @@ export default function DraftPage() {
     staleTime: 0,
   });
 
-  // Category search results
-  const { data: categorySearchResults } = useQuery<Array<{ categoryId: string; categoryName: string }>>({
-    queryKey: [`/api/ebay/categories?q=${categorySearch}`],
-    enabled: categorySearch.length > 2,
+  // Debounce category search (300ms delay)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedCategorySearch(categorySearch);
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [categorySearch]);
+
+  // Category search results (uses debounced search)
+  const { data: categorySearchResults, isLoading: searchingCategories, error: categorySearchError } = useQuery<Array<{ categoryId: string; categoryName: string }>>({
+    queryKey: [`/api/ebay/categories?q=${debouncedCategorySearch}`],
+    enabled: debouncedCategorySearch.length > 2,
     staleTime: 60000, // Cache for 1 minute
   });
 
@@ -110,11 +119,19 @@ export default function DraftPage() {
 
   // Initialize category when suggestions load
   useEffect(() => {
-    if (titleSuggestions && !selectedCategoryId) {
+    if (titleSuggestions && selectedCategoryId === null) {
       setSelectedCategoryId(titleSuggestions.categoryId);
       setSelectedCategoryName(titleSuggestions.categoryName);
     }
   }, [titleSuggestions]);
+
+  // Re-initialize category when regenerating (regenerateCount changes)
+  useEffect(() => {
+    if (regenerateCount > 0 && titleSuggestions) {
+      setSelectedCategoryId(titleSuggestions.categoryId);
+      setSelectedCategoryName(titleSuggestions.categoryName);
+    }
+  }, [regenerateCount, titleSuggestions?.categoryId]);
 
   // Initialize editable description when suggestions load
   useEffect(() => {
@@ -330,8 +347,20 @@ export default function DraftPage() {
                         data-testid="input-category-search"
                       />
                     </div>
-                    {categorySearchResults && categorySearchResults.length > 0 && (
-                      <div className="border rounded-lg max-h-48 overflow-y-auto">
+                    {searchingCategories && debouncedCategorySearch.length > 2 && (
+                      <div className="border rounded-lg p-3 text-center text-sm text-muted-foreground">
+                        <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
+                        Searching categories...
+                      </div>
+                    )}
+                    {categorySearchError && debouncedCategorySearch.length > 2 && (
+                      <div className="border border-destructive/50 rounded-lg p-3 text-center text-sm text-destructive">
+                        <AlertTriangle className="w-4 h-4 inline mr-2" />
+                        Failed to search categories. Please try again.
+                      </div>
+                    )}
+                    {!searchingCategories && !categorySearchError && categorySearchResults && categorySearchResults.length > 0 && (
+                      <div className="border rounded-lg max-h-48 overflow-y-auto" data-testid="list-category-results">
                         {categorySearchResults.map((cat) => (
                           <button
                             key={cat.categoryId}
@@ -340,13 +369,18 @@ export default function DraftPage() {
                               setSelectedCategoryName(cat.categoryName);
                               setCategorySearch("");
                             }}
-                            className="w-full p-2 text-left text-sm hover:bg-accent transition-colors"
+                            className="w-full p-2 text-left text-sm hover-elevate active-elevate-2 transition-colors"
                             data-testid={`button-select-category-${cat.categoryId}`}
                           >
                             <div className="font-medium">{cat.categoryName}</div>
                             <div className="text-xs text-muted-foreground font-mono">ID: {cat.categoryId}</div>
                           </button>
                         ))}
+                      </div>
+                    )}
+                    {!searchingCategories && !categorySearchError && debouncedCategorySearch.length > 2 && categorySearchResults && categorySearchResults.length === 0 && (
+                      <div className="border rounded-lg p-3 text-center text-sm text-muted-foreground">
+                        No categories found. Try different keywords.
                       </div>
                     )}
                   </div>
