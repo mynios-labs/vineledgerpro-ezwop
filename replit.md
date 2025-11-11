@@ -4,6 +4,12 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **eBay Category Search Authentication Fix** (Nov 11): Fixed 403 Forbidden errors in category search
+  - **Root Cause**: Taxonomy API requires client credentials token (basic oauth scope), not user refresh token (sell.* scopes)
+  - **Solution**: Created `getPublicAccessToken()` function with separate token cache for public APIs
+  - **Leaf Validation**: Category search endpoint now validates and returns only leaf categories (valid for listing creation)
+  - **Performance**: Added request-level memoization to avoid duplicate `isLeafCategory()` API calls
+  - **Result**: Category search now works correctly with debounced input, loading states, and proper error handling
 - **eBay-Compliant Listing Creation** (Nov 11): Complete overhaul of draft listing creation workflow
   - **Structured Descriptions**: AI now generates intro paragraph + bullet points + closing paragraph format (eBay compliance)
   - **Title Truncation**: Automatic 80-character limit with word-boundary truncation to prevent eBay errors
