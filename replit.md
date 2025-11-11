@@ -4,6 +4,15 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **eBay-Compliant Listing Creation** (Nov 11): Complete overhaul of draft listing creation workflow
+  - **Structured Descriptions**: AI now generates intro paragraph + bullet points + closing paragraph format (eBay compliance)
+  - **Title Truncation**: Automatic 80-character limit with word-boundary truncation to prevent eBay errors
+  - **Category Selection**: Added search interface for eBay categories with async dropdown results
+  - **Title Length Indicators**: Real-time character count (0-70: normal, 71-79: warning, 80+: error) with truncation badges
+  - **Editable Structured Editor**: Users can edit intro/bullets/closing independently with add/remove bullet controls
+  - **Regeneration Fix**: Clicking regenerate now refreshes both titles AND description with new AI suggestions
+  - **Pre-flight Validation**: Validates title length, photo count (min 2), category selection, numeric fields before eBay API calls
+  - **Field-level Error Parsing**: Surfaces specific eBay validation errors inline instead of generic failures
 - **AI Title Generation**: Updated prompt to avoid generic marketing words ("superior", "innovative", "reliable") and generate more creative, varied eBay listing titles
 - **Draft Pricing Fix**: Fixed total price calculation - users can now type freely in the Total Price field without input interference
 - **Cancellation Tracking System**: Implemented comprehensive tracking for cancelled Amazon Vine orders
