@@ -1188,6 +1188,7 @@ Output only JSON:
         dimsL,
         dimsW,
         dimsH,
+        fulfillmentPolicyId,
       } = req.body;
 
       // Validate all required fields before processing
@@ -1199,6 +1200,11 @@ Output only JSON:
         photos: photoCount,
       });
 
+      // Add fulfillment policy validation
+      if (!fulfillmentPolicyId) {
+        validationErrors.push("Fulfillment policy must be selected");
+      }
+
       if (validationErrors.length > 0) {
         return res.status(400).json({ 
           error: "Validation failed",
@@ -1208,6 +1214,7 @@ Output only JSON:
             description: validationErrors.find(e => e.includes("Description")),
             categoryId: validationErrors.find(e => e.includes("category")),
             photos: validationErrors.find(e => e.includes("photos")),
+            fulfillmentPolicyId: validationErrors.find(e => e.includes("Fulfillment")),
           }
         });
       }
@@ -1293,13 +1300,15 @@ Output only JSON:
       // Get or create merchant location
       const merchantLocationKey = await getOrCreateMerchantLocation();
 
-      // Note: listingPolicies are omitted - eBay will use the account's default business policies
-      // To use specific policies, they must first be created in your eBay account and stored in business_policies table
+      // Create offer with fulfillment policy
       const offer = await createOffer({
         sku,
         marketplaceId: "EBAY_US",
         format: "FIXED_PRICE",
         merchantLocationKey,
+        listingPolicies: {
+          fulfillmentPolicyId,
+        },
         pricingSummary: {
           price: {
             value: (parseInt(priceCents) / 100).toFixed(2),
@@ -1329,6 +1338,7 @@ Output only JSON:
             title,
             description,
             priceCents: parseInt(priceCents),
+            fulfillmentPolicyId,
             publishedAt: new Date(),
             state: "live",
           })
@@ -1346,6 +1356,7 @@ Output only JSON:
             title,
             description,
             priceCents: parseInt(priceCents),
+            fulfillmentPolicyId,
             publishedAt: new Date(),
             state: "live",
           })
