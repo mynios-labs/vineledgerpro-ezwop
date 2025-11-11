@@ -328,11 +328,11 @@ export default function DraftPage() {
             </Card>
 
             {/* Category Selector */}
-            {titleSuggestions && (
+            {vineItem && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Category</CardTitle>
-                  <CardDescription>Search or use AI-suggested category</CardDescription>
+                  <CardDescription>Search or use AI-suggested category{titleSuggestions ? "" : " (AI suggestion unavailable - please search manually)"}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-2">

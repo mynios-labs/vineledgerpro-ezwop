@@ -990,20 +990,49 @@ Output only JSON:
     try {
       const { q } = req.query;
       
-      if (!q || typeof q !== 'string') {
-        return res.status(400).json({ error: "Search query required" });
+      if (!q || typeof q !== 'string' || q.length < 3) {
+        return res.json([]); // Return empty array for invalid/short queries
       }
 
       const categories = await getSuggestedCategories(q);
       
-      // Format for easy consumption
-      const formatted = (categories.categorySuggestions || []).map((suggestion: any) => ({
-        categoryId: suggestion.category.categoryId,
-        categoryName: suggestion.category.categoryName,
-      }));
+      if (!categories.categorySuggestions || categories.categorySuggestions.length === 0) {
+        return res.json([]);
+      }
 
-      res.json(formatted);
+      // Validate each category is a leaf category (no child categories)
+      // Memoize results during this request to avoid duplicate API calls
+      const leafCheckCache = new Map<string, boolean>();
+      const validCategories = [];
+
+      for (const suggestion of categories.categorySuggestions) {
+        const catId = suggestion.category.categoryId;
+        
+        // Check cache first
+        let isLeaf: boolean;
+        if (leafCheckCache.has(catId)) {
+          isLeaf = leafCheckCache.get(catId)!;
+        } else {
+          isLeaf = await isLeafCategory(catId);
+          leafCheckCache.set(catId, isLeaf);
+        }
+
+        if (isLeaf) {
+          validCategories.push({
+            categoryId: catId,
+            categoryName: suggestion.category.categoryName,
+          });
+
+          // Limit to 10 results for performance
+          if (validCategories.length >= 10) {
+            break;
+          }
+        }
+      }
+
+      res.json(validCategories);
     } catch (error: any) {
+      console.error("[Category Search] Failed:", error);
       res.status(500).json({ error: error.message });
     }
   });
