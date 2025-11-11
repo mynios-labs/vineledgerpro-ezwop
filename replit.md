@@ -4,6 +4,8 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **AI Title Generation**: Updated prompt to avoid generic marketing words ("superior", "innovative", "reliable") and generate more creative, varied eBay listing titles
+- **Draft Pricing Fix**: Fixed total price calculation - users can now type freely in the Total Price field without input interference
 - **Cancellation Tracking System**: Implemented comprehensive tracking for cancelled Amazon Vine orders
   - Added `cancelled` status to vine_item_status enum with cancelledAt timestamp and cancelledImportId tracking
   - Added `orderNumber` field to vine_items for precise order matching (prevents duplicate entries)
@@ -14,6 +16,13 @@ This platform is a privacy-first eBay resale application designed for Amazon Vin
 - **Data Model Cleanup**: Removed "sold" and "reserved" from vine_item_status enum - these are now tracked via Listings (draft/live/ended) and Orders tables respectively
 - **1:1 Inventory Constraint**: Enforced one-to-one relationship between Vine Items and Inventory Items (cleaned up 99 duplicate records, added unique constraint)
 - **Production OAuth**: Implemented refresh token support for eBay API with proper scope handling and automatic token renewal (18-month refresh token lifecycle)
+
+## GitHub Repository
+- **Repository**: https://github.com/mynios-labs/vineledgerpro-ezwop
+- **Note**: Replit's git system prevents direct git operations via command line. To push code changes:
+  1. Use Replit's built-in Git interface in the left sidebar (Version Control tab)
+  2. Or manually use the Shell tool and perform git operations when locks are released
+  3. GIT_TOKEN secret is configured for authentication
 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
