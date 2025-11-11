@@ -991,7 +991,7 @@ Output only JSON:
       const { q } = req.query;
       
       if (!q || typeof q !== 'string' || q.length < 3) {
-        return res.json([]); // Return empty array for invalid/short queries
+        return res.json([]);
       }
 
       const categories = await getSuggestedCategories(q);

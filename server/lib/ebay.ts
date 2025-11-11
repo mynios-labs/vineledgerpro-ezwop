@@ -59,6 +59,51 @@ async function refreshAccessToken(): Promise<string> {
   return accessToken!;
 }
 
+// Public API token (client credentials) for read-only operations like Taxonomy
+let publicAccessToken: string | null = null;
+let publicTokenExpiry: number = 0;
+
+async function getPublicAccessToken(): Promise<string> {
+  // Check cached public token
+  if (publicAccessToken && Date.now() < publicTokenExpiry) {
+    return publicAccessToken;
+  }
+
+  console.log("[eBay] Generating client credentials token for public APIs");
+  const isProduction = process.env.EBAY_ENV === "production";
+  const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
+  const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
+  
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${credentials}`,
+    },
+    body: "grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope",
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[eBay] Public OAuth error:", response.status, errorText);
+    throw new Error(`eBay authentication failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  if (!data.access_token) {
+    console.error("[eBay] Public OAuth response missing access_token:", data);
+    throw new Error("eBay authentication failed: No access token in response");
+  }
+
+  publicAccessToken = data.access_token;
+  publicTokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // Refresh 1 min before expiry
+
+  console.log(`[eBay] Public access token generated, expires in ${data.expires_in} seconds`);
+  return publicAccessToken!;
+}
+
 async function getAccessToken(): Promise<string> {
   // Priority 1: Use manually provided user token (for testing or manual override)
   const isProduction = process.env.EBAY_ENV === "production";
@@ -81,59 +126,32 @@ async function getAccessToken(): Promise<string> {
   }
 
   // Priority 4: Fallback to client credentials (read-only operations)
-  console.log("[eBay] Generating client credentials token (read-only)");
-  const clientId = isProduction ? process.env.EBAY_PROD_CLIENT_ID : process.env.EBAY_CLIENT_ID;
-  const clientSecret = isProduction ? process.env.EBAY_PROD_CLIENT_SECRET : process.env.EBAY_CLIENT_SECRET;
-  
-  const credentials = Buffer.from(
-    `${clientId}:${clientSecret}`
-  ).toString("base64");
+  return await getPublicAccessToken();
+}
 
-  const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
-    method: "POST",
+export async function getSuggestedCategories(keywords: string): Promise<any> {
+  const token = await getPublicAccessToken();  // Use public token for Taxonomy API
+  
+  const url = `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/0/get_category_suggestions?q=${encodeURIComponent(keywords)}`;
+  
+  const response = await fetch(url, {
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${credentials}`,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-    body: "grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope",
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("eBay OAuth error:", response.status, errorText);
-    throw new Error(`eBay authentication failed: ${response.status} ${errorText}`);
+    console.error(`[eBay] Category suggestions API failed: ${response.status} ${errorText}`);
+    throw new Error(`eBay category suggestions failed: ${response.status}`);
   }
-
-  const data = await response.json();
-  if (!data.access_token) {
-    console.error("eBay OAuth response missing access_token:", data);
-    throw new Error("eBay authentication failed: No access token in response");
-  }
-
-  accessToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // Refresh 1 min before expiry
-
-  return accessToken!;
-}
-
-export async function getSuggestedCategories(keywords: string): Promise<any> {
-  const token = await getAccessToken();
-  
-  const response = await fetch(
-    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/0/get_category_suggestions?q=${encodeURIComponent(keywords)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
 
   return response.json();
 }
 
 export async function getCategoryDetails(categoryId: string): Promise<any> {
-  const token = await getAccessToken();
+  const token = await getPublicAccessToken();  // Use public token for Taxonomy API
   
   const response = await fetch(
     `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/0/get_category_subtree?category_id=${categoryId}`,
