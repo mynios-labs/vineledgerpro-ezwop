@@ -32,7 +32,7 @@ import {
   insertEbay1099Schema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
-import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation } from "./lib/ebay";
+import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 
@@ -1033,6 +1033,19 @@ Output only JSON:
       res.json(validCategories);
     } catch (error: any) {
       console.error("[Category Search] Failed:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get eBay fulfillment policies
+  app.get("/api/ebay/fulfillment-policies", async (req, res) => {
+    try {
+      const marketplaceId = (req.query.marketplace_id as string) || "EBAY_US";
+      const policies = await getFulfillmentPolicies(marketplaceId);
+      
+      res.json(policies.fulfillmentPolicies || []);
+    } catch (error: any) {
+      console.error("[Fulfillment Policies] Failed:", error);
       res.status(500).json({ error: error.message });
     }
   });

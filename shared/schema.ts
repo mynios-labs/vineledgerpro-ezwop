@@ -87,6 +87,7 @@ export const listings = pgTable("listings", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   priceCents: integer("price_cents").notNull(),
+  fulfillmentPolicyId: text("fulfillment_policy_id"),
   policyProfileId: varchar("policy_profile_id"),
   addressProfileId: varchar("address_profile_id"),
   publishedAt: timestamp("published_at"),

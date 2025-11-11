@@ -25,6 +25,8 @@ async function refreshAccessToken(): Promise<string> {
     "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+    "https://api.ebay.com/oauth/api_scope/sell.account",
+    "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
   ].join(" ");
 
   const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
@@ -280,32 +282,6 @@ export async function publishOffer(offerId: string): Promise<any> {
   return data;
 }
 
-export async function getFulfillmentPolicies(): Promise<any> {
-  const token = await getAccessToken();
-
-  console.log(`[eBay] Fetching fulfillment policies...`);
-  const response = await fetch(
-    `${EBAY_API_BASE}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_US`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Accept-Language": "en-US",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error(`[eBay] Get fulfillment policies failed:`, response.status, errorData);
-    throw new Error(`eBay get fulfillment policies failed: ${response.status} - ${JSON.stringify(errorData)}`);
-  }
-
-  const data = await response.json();
-  console.log(`[eBay] Found ${data.fulfillmentPolicies?.length || 0} fulfillment policies`);
-  return data;
-}
-
 export async function getOrCreateMerchantLocation(): Promise<string> {
   const token = await getAccessToken();
   const locationKey = "DEFAULT_LOCATION";
@@ -426,4 +402,43 @@ export async function getOrder(orderId: string): Promise<any> {
   );
 
   return response.json();
+}
+
+// Fulfillment policy cache (15-minute TTL)
+let fulfillmentPoliciesCache: any = null;
+let fulfillmentPoliciesCacheExpiry: number = 0;
+
+export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"): Promise<any> {
+  // Check cache
+  if (fulfillmentPoliciesCache && Date.now() < fulfillmentPoliciesCacheExpiry) {
+    return fulfillmentPoliciesCache;
+  }
+
+  console.log("[eBay] Fetching fulfillment policies from Account API");
+  const token = await getAccessToken();
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[eBay] Get fulfillment policies failed:`, response.status, errorText);
+    throw new Error(`eBay get fulfillment policies failed: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  
+  // Cache for 15 minutes
+  fulfillmentPoliciesCache = data;
+  fulfillmentPoliciesCacheExpiry = Date.now() + (15 * 60 * 1000);
+
+  console.log(`[eBay] Cached ${data.fulfillmentPolicies?.length || 0} fulfillment policies`);
+  return data;
 }
