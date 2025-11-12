@@ -74,6 +74,7 @@ export const inventoryItems = pgTable("inventory_items", {
   dimsInL: integer("dims_in_l"),
   dimsInW: integer("dims_in_w"),
   dimsInH: integer("dims_in_h"),
+  quantity: integer("quantity").notNull().default(1),
   hazmatFlag: boolean("hazmat_flag").notNull().default(false),
   privacyPassed: boolean("privacy_passed").notNull().default(false),
 });

@@ -13,6 +13,7 @@ import ConflictsPage from "@/pages/conflicts";
 import ManagePage from "@/pages/manage";
 import ImportDetailsPage from "@/pages/import-details";
 import DraftPage from "@/pages/draft";
+import ListingsPage from "@/pages/listings";
 import OrdersPage from "@/pages/orders";
 import MessagesPage from "@/pages/messages";
 import MoneyPage from "@/pages/money";
@@ -28,6 +29,7 @@ function Router() {
       <Route path="/manage" component={ManagePage} />
       <Route path="/manage/:importId" component={ImportDetailsPage} />
       <Route path="/draft" component={DraftPage} />
+      <Route path="/listings" component={ListingsPage} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/messages" component={MessagesPage} />
       <Route path="/money" component={MoneyPage} />

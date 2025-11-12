@@ -1,4 +1,4 @@
-import { Home, Package, ShoppingCart, MessageSquare, DollarSign, Activity, Database, FileText } from "lucide-react";
+import { Home, Package, ShoppingCart, MessageSquare, DollarSign, Activity, Database, FileText, List } from "lucide-react";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Link, useLocation } from "wouter";
 
@@ -7,6 +7,11 @@ const menuItems = [
     title: "Inventory",
     url: "/",
     icon: Home,
+  },
+  {
+    title: "Listings",
+    url: "/listings",
+    icon: List,
   },
   {
     title: "Orders",

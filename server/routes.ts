@@ -1656,6 +1656,337 @@ Output only JSON:
     }
   });
 
+  // Get all listings with photos
+  app.get("/api/listings", async (_req, res) => {
+    try {
+      const allListings = await db
+        .select({
+          listingId: listings.listingId,
+          inventoryId: listings.inventoryId,
+          ebayOfferId: listings.ebayOfferId,
+          ebayItemId: listings.ebayItemId,
+          categoryId: listings.categoryId,
+          title: listings.title,
+          description: listings.description,
+          priceCents: listings.priceCents,
+          fulfillmentPolicyId: listings.fulfillmentPolicyId,
+          publishedAt: listings.publishedAt,
+          state: listings.state,
+          photoSetId: inventoryItems.photoSetId,
+          weightOz: inventoryItems.weightOz,
+          dimsL: inventoryItems.dimsInL,
+          dimsW: inventoryItems.dimsInW,
+          dimsH: inventoryItems.dimsInH,
+          quantity: inventoryItems.quantity,
+        })
+        .from(listings)
+        .leftJoin(inventoryItems, eq(listings.inventoryId, inventoryItems.inventoryId))
+        .orderBy(sql`${listings.publishedAt} DESC NULLS LAST`);
+
+      // Fetch photos for each listing
+      const listingsWithPhotos = await Promise.all(
+        allListings.map(async (listing) => {
+          if (listing.photoSetId) {
+            const [photoSet] = await db
+              .select()
+              .from(photoSets)
+              .where(eq(photoSets.photoSetId, listing.photoSetId));
+            
+            return {
+              ...listing,
+              photos: photoSet?.urls || [],
+            };
+          }
+          return {
+            ...listing,
+            photos: [],
+          };
+        })
+      );
+
+      res.json(listingsWithPhotos);
+    } catch (error: any) {
+      console.error("[Get Listings] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Edit a listing
+  app.put("/api/listings/:id/edit", async (req, res) => {
+    const { getOffer, updateOffer, publishOfferTraced, createOrUpdateInventoryItemTraced } = await import("./lib/ebay");
+    const { ApiTracer } = await import("./lib/apiTracer");
+    const { compareOffers } = await import("./lib/ebayOfferHelpers");
+    const { z } = await import("zod");
+    
+    const tracer = new ApiTracer();
+
+    // Server-side validation schema  
+    const editSchema = z.object({
+      title: z.string().min(10).max(80),
+      description: z.string().min(20),
+      priceCents: z.number().int().positive(),
+      categoryId: z.string().optional(),
+      fulfillmentPolicyId: z.string().optional(),
+      weightOz: z.number().positive().optional(),
+      dimsL: z.number().positive().optional(),
+      dimsW: z.number().positive().optional(),
+      dimsH: z.number().positive().optional(),
+      quantity: z.number().int().positive().min(1).optional(),
+    });
+
+    // Validate input BEFORE try/catch
+    const validation = editSchema.safeParse({
+      title: req.body.title,
+      description: req.body.description,
+      priceCents: Number(req.body.priceCents),
+      categoryId: req.body.categoryId,
+      fulfillmentPolicyId: req.body.fulfillmentPolicyId,
+      weightOz: req.body.weightOz ? Number(req.body.weightOz) : undefined,
+      dimsL: req.body.dimsL ? Number(req.body.dimsL) : undefined,
+      dimsW: req.body.dimsW ? Number(req.body.dimsW) : undefined,
+      dimsH: req.body.dimsH ? Number(req.body.dimsH) : undefined,
+      quantity: req.body.quantity ? Number(req.body.quantity) : undefined,
+    });
+
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      });
+    }
+
+    const validatedData = validation.data;
+
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Get inventory item with photos
+      const [invItem] = await db
+        .select()
+        .from(inventoryItems)
+        .where(eq(inventoryItems.inventoryId, existingListing.inventoryId));
+
+      // Determine quantity: use provided value, or fall back to existing
+      const currentQuantity = invItem.quantity ?? 1;
+      const targetQuantity = validatedData.quantity ?? currentQuantity;
+
+      let photoUrls: string[] = [];
+      if (invItem.photoSetId) {
+        const [photoSet] = await db
+          .select()
+          .from(photoSets)
+          .where(eq(photoSets.photoSetId, invItem.photoSetId));
+        photoUrls = photoSet?.urls || [];
+      }
+
+      // UPDATE EBAY FIRST - if it fails, we won't corrupt local DB
+      if (existingListing.ebayOfferId && existingListing.state === "live") {
+        // Get current eBay offer
+        const currentOffer = await getOffer(existingListing.ebayOfferId, tracer);
+
+        // Compare what changed
+        const comparison = compareOffers(currentOffer, {
+          priceCents: validatedData.priceCents,
+          categoryId: validatedData.categoryId || existingListing.categoryId || "",
+          title: validatedData.title,
+          description: validatedData.description,
+          fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId || "",
+          imageUrls: photoUrls,
+        });
+
+        console.log(`[Edit Listing] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
+
+        // If dimensions or title/description changed, update inventory item
+        const inventoryNeedsUpdate = 
+          validatedData.weightOz !== invItem.weightOz ||
+          validatedData.dimsL !== invItem.dimsInL ||
+          validatedData.dimsW !== invItem.dimsInW ||
+          validatedData.dimsH !== invItem.dimsInH ||
+          comparison.nonRevisableChanges.includes("title") ||
+          comparison.nonRevisableChanges.includes("description");
+
+        if (inventoryNeedsUpdate) {
+          const sku = `ITEM-${existingListing.inventoryId}`;
+          await createOrUpdateInventoryItemTraced(sku, {
+            product: {
+              title: validatedData.title,
+              description: validatedData.description,
+              aspects: {},
+              imageUrls: photoUrls.slice(0, 12),
+            },
+            condition: "NEW",
+            availability: {
+              shipToLocationAvailability: {
+                quantity: targetQuantity,
+              },
+            },
+            packageWeightAndSize: {
+              weight: {
+                value: validatedData.weightOz || invItem.weightOz || 1,
+                unit: "OUNCE",
+              },
+              dimensions: {
+                length: validatedData.dimsL || invItem.dimsInL || 1,
+                width: validatedData.dimsW || invItem.dimsInW || 1,
+                height: validatedData.dimsH || invItem.dimsInH || 1,
+                unit: "INCH",
+              },
+            },
+          }, tracer);
+        }
+
+        // Get merchant location and policies
+        const { getOrCreateMerchantLocation, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
+        const merchantLocationKey = await getOrCreateMerchantLocation();
+        
+        const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+        const selectedPaymentPolicy = selectBestPolicy(
+          paymentPoliciesData.paymentPolicies || [],
+          "EBAY_US",
+          "paymentPolicyId"
+        );
+        
+        const returnPoliciesData = await getReturnPolicies("EBAY_US");
+        const selectedReturnPolicy = selectBestPolicy(
+          returnPoliciesData.returnPolicies || [],
+          "EBAY_US",
+          "returnPolicyId"
+        );
+
+        // Update offer on eBay
+        await updateOffer(existingListing.ebayOfferId, {
+          sku: `ITEM-${existingListing.inventoryId}`,
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          merchantLocationKey,
+          listingPolicies: {
+            paymentPolicyId: selectedPaymentPolicy.paymentPolicyId,
+            returnPolicyId: selectedReturnPolicy.returnPolicyId,
+            fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId,
+          },
+          pricingSummary: {
+            price: {
+              value: (validatedData.priceCents / 100).toFixed(2),
+              currency: "USD",
+            },
+          },
+          categoryId: validatedData.categoryId || existingListing.categoryId,
+          availableQuantity: targetQuantity,
+        }, tracer);
+
+        // Republish if needed
+        if (comparison.nonRevisableChanges.length > 0 && currentOffer.status !== "PUBLISHED") {
+          await publishOfferTraced(existingListing.ebayOfferId, tracer);
+        }
+
+        console.log(`[Edit Listing] Successfully updated eBay listing ${existingListing.ebayItemId}`);
+      }
+
+      // ONLY update local DB after eBay succeeds
+      await db
+        .update(listings)
+        .set({
+          title: validatedData.title,
+          description: validatedData.description,
+          priceCents: validatedData.priceCents,
+          categoryId: validatedData.categoryId,
+          fulfillmentPolicyId: validatedData.fulfillmentPolicyId,
+        })
+        .where(eq(listings.listingId, id));
+
+      // Update inventory item fields (dimensions and quantity)
+      const inventoryUpdates: any = {};
+      if (validatedData.weightOz !== undefined) inventoryUpdates.weightOz = validatedData.weightOz;
+      if (validatedData.dimsL !== undefined) inventoryUpdates.dimsInL = validatedData.dimsL;
+      if (validatedData.dimsW !== undefined) inventoryUpdates.dimsInW = validatedData.dimsW;
+      if (validatedData.dimsH !== undefined) inventoryUpdates.dimsInH = validatedData.dimsH;
+      if (validatedData.quantity !== undefined) inventoryUpdates.quantity = validatedData.quantity;
+
+      if (Object.keys(inventoryUpdates).length > 0) {
+        await db
+          .update(inventoryItems)
+          .set(inventoryUpdates)
+          .where(eq(inventoryItems.inventoryId, existingListing.inventoryId));
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Listing updated successfully",
+        trace: tracer.getTrace(),
+      });
+    } catch (error: any) {
+      console.error("[Edit Listing] Error:", error);
+      
+      res.status(500).json({ 
+        error: error.message,
+        trace: tracer.getTrace(),
+      });
+    }
+  });
+
+  // End/withdraw a listing
+  app.post("/api/listings/:id/end", async (req, res) => {
+    const { withdrawOffer } = await import("./lib/ebay");
+    const { ApiTracer } = await import("./lib/apiTracer");
+    
+    const tracer = new ApiTracer();
+
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Withdraw from eBay if published
+      if (existingListing.ebayOfferId && existingListing.state === "live") {
+        try {
+          await withdrawOffer(existingListing.ebayOfferId, tracer);
+          console.log(`[End Listing] Successfully withdrew eBay offer ${existingListing.ebayOfferId}`);
+        } catch (ebayError: any) {
+          console.error("[End Listing] eBay withdraw failed:", ebayError.message);
+          // Continue even if eBay withdraw fails
+        }
+      }
+
+      // Update local database
+      await db
+        .update(listings)
+        .set({
+          state: "ended",
+        })
+        .where(eq(listings.listingId, id));
+
+      res.json({ 
+        success: true, 
+        message: "Listing ended successfully",
+        trace: tracer.getTrace(),
+      });
+    } catch (error: any) {
+      console.error("[End Listing] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        trace: tracer.getTrace(),
+      });
+    }
+  });
+
   // Get orders stats
   app.get("/api/orders/stats", async (_req, res) => {
     try {
