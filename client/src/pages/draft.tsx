@@ -266,6 +266,15 @@ export default function DraftPage() {
         throw new Error("Please select a fulfillment policy");
       }
 
+      // DEBUG: Log title selection details
+      const selectedTitleText = editableTitles[selectedTitle];
+      console.log("[PUBLISH DEBUG] Title selection:", {
+        selectedTitleIndex: selectedTitle,
+        allTitles: editableTitles,
+        selectedTitleText,
+        selectedTitleLength: selectedTitleText?.length,
+      });
+
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
@@ -537,9 +546,9 @@ export default function DraftPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {editableTitles.map((title, index) => (
-                  <div
+                  <label
                     key={index}
-                    className={`p-3 rounded-lg border-2 transition-all ${
+                    className={`p-3 rounded-lg border-2 transition-all cursor-pointer ${
                       selectedTitle === index
                         ? "border-primary bg-accent"
                         : "border-border"
@@ -549,11 +558,14 @@ export default function DraftPage() {
                     onMouseLeave={() => setHoveredTitleIndex(null)}
                   >
                     <div className="flex items-start gap-2">
-                      <div 
-                        className={`mt-1 w-4 h-4 rounded-full border-2 flex-shrink-0 cursor-pointer ${
-                          selectedTitle === index ? "bg-primary border-primary" : "border-muted-foreground"
-                        }`}
-                        onClick={() => setSelectedTitle(index)}
+                      <input
+                        type="radio"
+                        name="title-selection"
+                        value={index}
+                        checked={selectedTitle === index}
+                        onChange={() => setSelectedTitle(index)}
+                        className="mt-1 w-4 h-4 flex-shrink-0 cursor-pointer accent-primary"
+                        data-testid={`radio-title-${index}`}
                       />
                       <div className="flex-1 space-y-2">
                         {index === 0 && (
@@ -616,7 +628,7 @@ export default function DraftPage() {
                         )}
                       </div>
                     </div>
-                  </div>
+                  </label>
                 ))}
                 {generatingTitles && (
                   <div className="text-center py-4 text-sm text-muted-foreground">
