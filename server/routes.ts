@@ -2189,22 +2189,46 @@ Output only JSON:
             const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
             const promotionFee = 0; // Would come from eBay transaction details
 
+            // Extract shipping address from eBay order
+            const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+            const shipToFullAddress = shipTo?.contactAddress ? {
+              name: shipTo.fullName || '',
+              street1: shipTo.contactAddress.addressLine1 || '',
+              street2: shipTo.contactAddress.addressLine2,
+              city: shipTo.contactAddress.city || '',
+              state: shipTo.contactAddress.stateOrProvince || '',
+              postalCode: shipTo.contactAddress.postalCode || '',
+              country: shipTo.contactAddress.countryCode || 'US',
+              phone: shipTo.primaryPhone?.phoneNumber,
+            } : null;
+
             // Create order
             const [newOrder] = await tx
               .insert(orders)
               .values({
                 ebayOrderId: ebayOrder.orderId,
+                ebaySku: lineItem.sku || listing.ebaySku || '',
                 listingId: listing.listingId,
+                title: lineItem.title,
                 buyerId: buyer.buyerId,
+                buyerUsername,
+                buyerName: shipTo?.fullName || null,
+                shipToFullAddress,
                 saleGrossCents,
                 shippingCollectedCents,
                 ebayFeesCents: ebayFinalValueFee + promotionFee,
                 payoutCents: 0, // Updated when payout occurs
+                quantityOrdered: lineItem.quantity || 1,
                 orderDate: new Date(ebayOrder.creationDate),
+                paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : null,
                 shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
                   ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
                   : null,
+                fulfillmentStatus: ebayOrder.orderFulfillmentStatus,
                 status: "paid",
+                shippingStatus: "unshipped",
+                lastSyncedAt: new Date(),
+                lastSyncSource: "auto_sync",
               })
               .returning();
 
@@ -3252,21 +3276,45 @@ Output only JSON:
               parseFloat(ebayOrder.pricingSummary?.totalTax?.value || "0") * 100
             );
 
+            // Extract shipping address from eBay order
+            const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+            const shipToFullAddress = shipTo?.contactAddress ? {
+              name: shipTo.fullName || '',
+              street1: shipTo.contactAddress.addressLine1 || '',
+              street2: shipTo.contactAddress.addressLine2,
+              city: shipTo.contactAddress.city || '',
+              state: shipTo.contactAddress.stateOrProvince || '',
+              postalCode: shipTo.contactAddress.postalCode || '',
+              country: shipTo.contactAddress.countryCode || 'US',
+              phone: shipTo.primaryPhone?.phoneNumber,
+            } : null;
+
             const [newOrder] = await tx
               .insert(orders)
               .values({
                 ebayOrderId: ebayOrder.orderId,
+                ebaySku: lineItem.sku || listing.ebaySku || '',
                 listingId: listing.listingId,
+                title: lineItem.title,
                 buyerId: buyer.buyerId,
+                buyerUsername,
+                buyerName: shipTo?.fullName || null,
+                shipToFullAddress,
                 saleGrossCents,
                 shippingCollectedCents,
                 ebayFeesCents: ebayFinalValueFee + promotionFee,
                 payoutCents: 0, // Updated when payout occurs
+                quantityOrdered: lineItem.quantity || 1,
                 orderDate: new Date(ebayOrder.creationDate),
+                paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : null,
                 shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
                   ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
                   : null,
+                fulfillmentStatus: ebayOrder.orderFulfillmentStatus,
                 status: "paid",
+                shippingStatus: "unshipped",
+                lastSyncedAt: new Date(),
+                lastSyncSource: "auto_sync",
               })
               .returning();
 
