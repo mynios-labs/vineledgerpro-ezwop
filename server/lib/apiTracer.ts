@@ -39,14 +39,12 @@ export class ApiTracer {
 
     try {
       const response = await executor();
-      const responseText = await response.text();
       const durationMs = Date.now() - stepStartTime;
 
       traceStep.responseStatus = response.status;
       traceStep.responseHeaders = this.redactHeaders(
         Object.fromEntries(response.headers.entries())
       );
-      traceStep.responseBody = this.tryParseJson(responseText);
       traceStep.durationMs = durationMs;
 
       // Extract correlation ID if present
@@ -56,12 +54,38 @@ export class ApiTracer {
         traceStep.correlationId = correlationId;
       }
 
-      // Parse data
+      // Handle 204 No Content responses (must not have body)
+      let responseText = '';
       let data: T;
-      try {
-        data = JSON.parse(responseText) as T;
-      } catch {
-        data = responseText as T;
+      let clonedResponse: Response;
+
+      if (response.status === 204) {
+        // 204 No Content: don't read body, don't parse JSON
+        data = {} as T;
+        traceStep.responseBody = null;
+        clonedResponse = new Response(null, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      } else {
+        // All other status codes: read and parse body
+        responseText = await response.text();
+        traceStep.responseBody = this.tryParseJson(responseText);
+
+        // Parse data
+        try {
+          data = JSON.parse(responseText) as T;
+        } catch {
+          data = responseText as T;
+        }
+
+        // Re-create response with consumed text
+        clonedResponse = new Response(responseText, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
       }
 
       // Check for logical failures (e.g., eBay errors[] in 200 OK response)
@@ -73,13 +97,6 @@ export class ApiTracer {
       }
 
       this.steps.push(traceStep);
-
-      // Re-create response with consumed text
-      const clonedResponse = new Response(responseText, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
 
       return { response: clonedResponse, data };
     } catch (error: any) {

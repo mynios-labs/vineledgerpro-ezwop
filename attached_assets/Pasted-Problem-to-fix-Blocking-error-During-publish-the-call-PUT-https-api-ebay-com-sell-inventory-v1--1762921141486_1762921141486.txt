@@ -1,0 +1,68 @@
+Problem to fix
+
+Blocking error: During publish, the call PUT https://api.ebay.com/sell/inventory/v1/inventory_item/{sku}
+ returns HTTP 204 No Content.
+
+Our code then throws Response constructor: Invalid response status code 204 and aborts the flow.
+
+This is a client handling bug on our side. eBay legitimately returns 204 with no body for this endpoint. We treat 204 like a failure or we try to parse a body.
+
+Required fix
+
+Handle 204 correctly. Treat 204 on inventory item create or update as success. Do not parse a body. Do not wrap a 204 response with a body. Continue the publish pipeline after a 204.
+
+Add a unit test that mocks a 204 from inventory_item and asserts we return success and proceed.
+
+Results modal fix
+
+The results modal overflows. Make it a fixed max size and scrollable inside.
+
+Width 860 to 960 px. Max height 80vh. Content area overflow: auto.
+
+Monospace for request and response blocks.
+
+Always show step, method, URL, status, headers, request body, response body, and duration.
+
+Add “Copy all to clipboard”.
+
+The modal must not grow beyond page margins.
+
+End to end test to run on repeat until a listing is live
+
+Use only real data. No placeholders. No workarounds.
+
+Go to Inventory. Search “dog water”.
+
+Select the item that matches the screenshots:
+
+ASIN B0DZC7ZBT8
+
+Title beginning “PETSOLON Automatic Dog Water Dispenser, 2 Gallons 304 Stainless Steel…”
+
+Click Create Listing.
+
+On Draft page, set exactly as shown in the screenshots:
+
+Category: “Dishes, Feeders & Fountains” ID 177789.
+
+Fulfillment Policy: Free Domestic Shipping.
+
+Shipping pricing and dimensions: match the screenshot values so the estimate is shown.
+
+Title: choose the compliant option under 80 characters.
+
+Photos: upload the two real HTTPS images now hosted by our /uploads/... route.
+
+Ensure description is filled.
+
+Click Approve & Publish to eBay.
+
+If any step fails, show the new modal with full details for each API request and response.
+
+If the failure is our code, fix it and rerun from step 1. If the failure is eBay validation, fix our payload to use the real selected values and rerun.
+
+Repeat until publish succeeds and the listing is confirmed live.
+
+On success, show a success modal with step summary, created IDs, and a hint to verify in Seller Hub. Only this item should be created. No other drafts.
+
+Run this now. The 204 handling is the blocker. After that is fixed, the loop should complete.

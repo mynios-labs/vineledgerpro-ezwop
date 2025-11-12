@@ -753,6 +753,10 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
       requestInit,
       () => fetch(url, requestInit),
       (data, response) => {
+        // 204 No Content is success for PUT inventory_item
+        if (response.status === 204) {
+          return null;
+        }
         if (!response.ok) {
           return `Create inventory item failed: ${response.status} - ${JSON.stringify(data)}`;
         }
@@ -763,9 +767,12 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
       }
     );
     
-    if (!response.ok || data.errors) {
+    // 204 No Content is success
+    if (response.status !== 204 && (!response.ok || data.errors)) {
       throw new Error(`Create inventory item failed: ${response.status} - ${JSON.stringify(data)}`);
     }
+    
+    console.log(`[eBay] Inventory item ${response.status === 204 ? 'created/updated' : 'processed'} successfully: ${sku}`);
   } else {
     await createOrUpdateInventoryItem(sku, item);
   }
