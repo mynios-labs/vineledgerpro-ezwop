@@ -1,0 +1,71 @@
+What’s actually wrong
+
+Your code is reaching the publish step and eBay’s API answers with 25018 SELLING_PRIVILEGE_REQUIRED. That means the token you’re using is not seen by eBay’s API as having selling privileges for the US site. The web UI can still let you list. The API is stricter and checks a specific “privilege” flag on the exact user who consented during OAuth.
+
+This is almost never fixed by code once the payload is valid. It is fixed by making sure the Production OAuth consent is tied to the same seller account that has selling privileges and that the account has finished onboarding for API use.
+
+Where to fix it and how
+
+Do these in order. No guessing.
+
+Re-consent in Production with the correct account
+
+In the eBay Developer Portal open your Production app.
+
+Click User Tokens (eBay Sign-in) then OAuth (new security) then Sign in to Production.
+
+When the eBay login page appears, confirm the username in the top right says antonioomar before you click Agree. If it shows a different user, sign out and sign back in as antonioomar.
+
+Complete consent using these scopes only:
+
+https://api.ebay.com/oauth/api_scope
+
+.../sell.account
+
+.../sell.inventory
+
+.../sell.fulfillment
+
+Paste the refresh token into Replit and remove any manual user token. Restart the app.
+
+Verify privileges via API, not by looking at Seller Hub
+
+Call GET /sell/account/v1/privilege with that new token.
+
+You want sellerRegistrationCompleted: true and no active restrictions for EBAY_US.
+
+If it is false or shows a restriction, this is why the API blocks publish. You must clear the restriction with eBay support.
+
+Verify identity matches the seller
+
+Call GET /commerce/identity/v1/user.
+
+Confirm the username returned is antonioomar. If it is different, you consented the wrong account in step 1.
+
+Confirm business policies exist and are active for US
+
+Call GET /sell/account/v1/payment_policy, return_policy, fulfillment_policy.
+
+Ensure the IDs you pass are present, marketplaceId is EBAY_US, and status is ACTIVE.
+
+Kill stale or conflicting offers for the same SKU
+
+In Inventory API, list offers for the SKU.
+
+If there are old offers in unpublished or ended states that clash, delete them or reuse one ACTIVE offer rather than creating a new one.
+
+Retry publish with the verified token
+
+With steps 1 to 5 green, the publish call should no longer throw 25018.
+
+If privileges still read false
+
+That means the hold is on eBay’s side. Common reasons:
+
+Payments onboarding not fully completed for the API flag even though the UI works.
+
+Marketplace mismatch. Policies tied to a non-US marketplace while you publish to US.
+
+Account limitation after a recent change, which only the privileges endpoint reveals.
+
+You fix those in Seller Hub and Account settings or by contacting eBay support to clear the API selling privilege block. Point them to the GET /sell/account/v1/privilege response.

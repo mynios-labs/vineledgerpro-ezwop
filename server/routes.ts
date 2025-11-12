@@ -2502,6 +2502,226 @@ Output only JSON:
     }
   });
 
+  // eBay API Prerequisites Health Check
+  // Verifies seller account is ready for API listing after OAuth consent
+  app.get("/api/health/ebay-prerequisites", async (_req, res) => {
+    try {
+      const { getAccessToken } = await import("./lib/ebay");
+      const token = await getAccessToken();
+      const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
+        ? "https://api.ebay.com"
+        : "https://api.sandbox.ebay.com";
+
+      const results: any = {
+        environment: process.env.EBAY_ENV || "sandbox",
+        timestamp: new Date().toISOString(),
+        checks: {},
+        summary: {
+          passed: 0,
+          failed: 0,
+          warnings: 0
+        }
+      };
+
+      // 1. Check seller privileges
+      try {
+        const privResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/privilege`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const privData = await privResponse.json();
+        
+        const hasSellingPrivilege = privData.sellerRegistrationCompleted === true;
+        const restrictions = privData.sellingLimit?.restrictions || [];
+        const usRestrictions = restrictions.filter((r: any) => r.marketplaceId === "EBAY_US");
+
+        results.checks.sellerPrivileges = {
+          status: hasSellingPrivilege && usRestrictions.length === 0 ? "pass" : "fail",
+          sellerRegistrationCompleted: privData.sellerRegistrationCompleted,
+          restrictions: usRestrictions,
+          message: hasSellingPrivilege 
+            ? (usRestrictions.length > 0 ? "Seller registration complete but has US marketplace restrictions" : "Seller registration complete, no restrictions")
+            : "Seller registration not completed - account onboarding required"
+        };
+
+        if (results.checks.sellerPrivileges.status === "pass") {
+          results.summary.passed++;
+        } else {
+          results.summary.failed++;
+        }
+      } catch (error: any) {
+        results.checks.sellerPrivileges = {
+          status: "error",
+          error: error.message
+        };
+        results.summary.failed++;
+      }
+
+      // 2. Check user identity
+      try {
+        const identityResponse = await fetch(`${EBAY_API_BASE}/commerce/identity/v1/user`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const identityData = await identityResponse.json();
+        
+        const expectedUsername = "antonioomar"; // From the guide
+        const actualUsername = identityData.username;
+        const usernameMatches = actualUsername === expectedUsername;
+
+        results.checks.userIdentity = {
+          status: usernameMatches ? "pass" : "warning",
+          username: actualUsername,
+          expected: expectedUsername,
+          message: usernameMatches 
+            ? `User identity verified: ${actualUsername}`
+            : `Username mismatch - expected ${expectedUsername}, got ${actualUsername}. OAuth may be consented to wrong account.`
+        };
+
+        if (results.checks.userIdentity.status === "pass") {
+          results.summary.passed++;
+        } else {
+          results.summary.warnings++;
+        }
+      } catch (error: any) {
+        results.checks.userIdentity = {
+          status: "error",
+          error: error.message
+        };
+        results.summary.failed++;
+      }
+
+      // 3. Check payment policies
+      try {
+        const paymentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/payment_policy`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const paymentData = await paymentResponse.json();
+        
+        const usPolicies = paymentData.paymentPolicies?.filter((p: any) => 
+          p.marketplaceId === "EBAY_US"
+        ) || [];
+        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+
+        results.checks.paymentPolicies = {
+          status: activePolicies.length > 0 ? "pass" : "fail",
+          totalPolicies: usPolicies.length,
+          activePolicies: activePolicies.length,
+          policies: activePolicies.map((p: any) => ({
+            id: p.paymentPolicyId,
+            name: p.name,
+            status: p.status
+          })),
+          message: activePolicies.length > 0 
+            ? `Found ${activePolicies.length} active US payment policy(ies)`
+            : "No active US payment policies - configure in eBay Seller Hub > Business Policies"
+        };
+
+        if (results.checks.paymentPolicies.status === "pass") {
+          results.summary.passed++;
+        } else {
+          results.summary.failed++;
+        }
+      } catch (error: any) {
+        results.checks.paymentPolicies = {
+          status: "error",
+          error: error.message
+        };
+        results.summary.failed++;
+      }
+
+      // 4. Check return policies
+      try {
+        const returnResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/return_policy`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const returnData = await returnResponse.json();
+        
+        const usPolicies = returnData.returnPolicies?.filter((p: any) => 
+          p.marketplaceId === "EBAY_US"
+        ) || [];
+        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+
+        results.checks.returnPolicies = {
+          status: activePolicies.length > 0 ? "pass" : "fail",
+          totalPolicies: usPolicies.length,
+          activePolicies: activePolicies.length,
+          policies: activePolicies.map((p: any) => ({
+            id: p.returnPolicyId,
+            name: p.name,
+            status: p.status
+          })),
+          message: activePolicies.length > 0 
+            ? `Found ${activePolicies.length} active US return policy(ies)`
+            : "No active US return policies - configure in eBay Seller Hub > Business Policies"
+        };
+
+        if (results.checks.returnPolicies.status === "pass") {
+          results.summary.passed++;
+        } else {
+          results.summary.failed++;
+        }
+      } catch (error: any) {
+        results.checks.returnPolicies = {
+          status: "error",
+          error: error.message
+        };
+        results.summary.failed++;
+      }
+
+      // 5. Check fulfillment policies
+      try {
+        const fulfillmentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/fulfillment_policy`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const fulfillmentData = await fulfillmentResponse.json();
+        
+        const usPolicies = fulfillmentData.fulfillmentPolicies?.filter((p: any) => 
+          p.marketplaceId === "EBAY_US"
+        ) || [];
+        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+
+        results.checks.fulfillmentPolicies = {
+          status: activePolicies.length > 0 ? "pass" : "fail",
+          totalPolicies: usPolicies.length,
+          activePolicies: activePolicies.length,
+          policies: activePolicies.map((p: any) => ({
+            id: p.fulfillmentPolicyId,
+            name: p.name,
+            status: p.status
+          })),
+          message: activePolicies.length > 0 
+            ? `Found ${activePolicies.length} active US fulfillment policy(ies)`
+            : "No active US fulfillment policies - configure in eBay Seller Hub > Business Policies"
+        };
+
+        if (results.checks.fulfillmentPolicies.status === "pass") {
+          results.summary.passed++;
+        } else {
+          results.summary.failed++;
+        }
+      } catch (error: any) {
+        results.checks.fulfillmentPolicies = {
+          status: "error",
+          error: error.message
+        };
+        results.summary.failed++;
+      }
+
+      // Overall status
+      results.overallStatus = results.summary.failed === 0 ? "ready" : "not_ready";
+      results.message = results.overallStatus === "ready"
+        ? "All eBay API prerequisites are satisfied. Ready to publish listings."
+        : `${results.summary.failed} check(s) failed. Review failed checks and complete eBay account setup.`;
+
+      res.json(results);
+    } catch (error: any) {
+      console.error("[Health Check] eBay prerequisites check failed:", error);
+      res.status(500).json({ 
+        error: "Failed to check eBay prerequisites",
+        details: error.message
+      });
+    }
+  });
+
   const httpServer = createServer(app);
 
   // Background job: Periodically sync eBay orders
