@@ -593,7 +593,10 @@ export default function DraftPage() {
                                 className={`h-6 w-6 flex-shrink-0 transition-opacity ${
                                   hoveredTitleIndex === index ? 'opacity-100' : 'opacity-0'
                                 }`}
-                                onClick={() => setEditingTitleIndex(index)}
+                                onClick={() => {
+                                  setSelectedTitle(index);
+                                  setEditingTitleIndex(index);
+                                }}
                                 data-testid={`button-edit-title-${index}`}
                               >
                                 <Edit2 className="w-3 h-3" />
