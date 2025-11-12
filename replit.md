@@ -4,6 +4,18 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **Listing Management System** (Nov 12): Comprehensive listing editing and management capabilities
+  - **Listings Page** (/listings): Grid view of all published eBay listings with photos, pricing, status badges, and action buttons
+  - **Edit Functionality**: Full editing support for title, description, price, category, fulfillment policy, dimensions, weight, and quantity
+  - **Quantity Persistence**: Added `quantity` column to `inventory_items` table with intelligent fallback logic
+    - When quantity is provided: updates eBay inventory + offer + local DB
+    - When quantity is omitted: preserves existing value (prevents accidental reset to 1)
+    - Implementation: `targetQuantity = validatedData.quantity ?? currentQuantity` pattern
+  - **Update Flow**: eBay-first updates (inventory item → offer) followed by DB persistence only on success (prevents data drift)
+  - **Validation**: Zod safeParse runs BEFORE try/catch, returns 400 for validation errors vs 500 for server errors
+  - **End/Delete Listing**: Withdraw eBay offers and update local state with confirmation dialog
+  - **API Endpoints**: GET /api/listings (with quantity), PUT /api/listings/:id/edit, POST /api/listings/:id/end
+  - **Testing**: E2E test confirms quantity persistence and fallback logic work correctly
 - **eBay Fulfillment Policy Integration** (Nov 11): Added complete fulfillment policy selection workflow
   - **API Endpoint**: GET /api/ebay/fulfillment-policies with 15-minute caching to fetch user's eBay fulfillment policies
   - **Draft Page UI**: Added Fulfillment Policy card with Select dropdown, auto-selection for single policy, and visual confirmation
