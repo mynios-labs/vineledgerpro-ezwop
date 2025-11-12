@@ -108,7 +108,7 @@ async function getPublicAccessToken(): Promise<string> {
   return publicAccessToken!;
 }
 
-async function getAccessToken(): Promise<string> {
+export async function getAccessToken(): Promise<string> {
   // Priority 1: Use manually provided user token (for testing or manual override)
   const isProduction = process.env.EBAY_ENV === "production";
   const userToken = isProduction ? process.env.EBAY_PROD_USER_TOKEN : process.env.EBAY_USER_TOKEN;
