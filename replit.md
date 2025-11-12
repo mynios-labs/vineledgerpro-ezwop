@@ -4,7 +4,15 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
-- **eBay Sync Service Foundation** (Nov 12 - IN PROGRESS): Major architectural shift to make eBay source of truth
+- **Draft Listing Critical Fixes** (Nov 12): Resolved fulfillment policy sync, title validation, and localStorage persistence issues
+  - **Bidirectional Fulfillment Policy Sync**: Policy selection auto-syncs shipping mode ("Free Domestic Shipping" → "Include in price", "Buyer Pays" → "Charge separately") and vice versa
+  - **LocalStorage Persistence**: Fulfillment policy and shipping mode selections persist per vineItemId with validation on load (removes invalid/inactive policies)
+  - **Title Validation UI**: Titles >80 chars marked as "Reference only" with disabled radio buttons, red border, and reduced opacity (cannot be selected)
+  - **Input Enforcement**: Added maxLength={80} to title Input fields to prevent editing beyond eBay's 80-character limit
+  - **Publish Validation**: Mutation validates title length and shows immediate error toast + detailed modal on failure
+  - **Implementation**: handleFulfillmentPolicyChange() and handleShippingModeChange() handlers wired to UI, loop-free sync via equality checks
+  - **Testing**: Architect-approved, all validation flows confirmed working (prevention → UI blocking → publish blocking → user feedback)
+- **eBay Sync Service Foundation** (Nov 12 - PAUSED): Major architectural shift to make eBay source of truth
   - **Status**: Architect-approved sync service complete, paused pending product direction confirmation
   - **Completed**: `server/lib/ebaySync.ts` with comprehensive drift detection, unit conversion, pagination
   - **Schema Updates**: Added drift tracking fields to listings/orders tables (migration applied)
