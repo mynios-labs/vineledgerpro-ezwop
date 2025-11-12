@@ -1,13 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
-import { Package, Truck, CheckCircle, Printer, ExternalLink } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Package, Truck, CheckCircle, Printer, ExternalLink, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Order } from "@shared/schema";
 
 export default function OrdersPage() {
+  const { toast } = useToast();
+
   const { data: orders, isLoading } = useQuery<(Order & {
     listingTitle: string;
     buyerUsername: string;
@@ -22,6 +26,37 @@ export default function OrdersPage() {
     delivered: number;
   }>({
     queryKey: ["/api/orders/stats"],
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/sync/ebay/orders", {
+        method: "POST",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Sync failed");
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders/stats"] });
+      
+      toast({
+        title: "Sync complete",
+        description: `${data.createdCount} new, ${data.updatedCount} updated${data.shippedDetectedCount > 0 ? `, ${data.shippedDetectedCount} drift detected` : ''}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Sync failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const getStatusColor = (status: string) => {
@@ -51,9 +86,19 @@ export default function OrdersPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Orders</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage your eBay orders and shipping</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Orders</h1>
+            <p className="text-sm text-muted-foreground mt-1">Manage your eBay orders and shipping</p>
+          </div>
+          <Button
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            data-testid="button-sync-orders"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+            {syncMutation.isPending ? "Syncing..." : "Sync now"}
+          </Button>
         </div>
 
         {/* Stats Cards */}

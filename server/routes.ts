@@ -2315,6 +2315,292 @@ Output only JSON:
     }
   });
 
+  // Comprehensive eBay orders sync with drift detection and pagination
+  app.post("/api/sync/ebay/orders", async (req, res) => {
+    try {
+      const { since } = req.query;
+      
+      // Determine sync start date with smart defaults
+      let syncStartDate: Date;
+      
+      if (since && typeof since === 'string') {
+        // Use provided ISO date
+        syncStartDate = new Date(since);
+      } else {
+        // Find the most recent lastSyncedAt from orders table
+        const [mostRecentOrder] = await db
+          .select({ lastSyncedAt: orders.lastSyncedAt })
+          .from(orders)
+          .where(sql`${orders.lastSyncedAt} IS NOT NULL`)
+          .orderBy(sql`${orders.lastSyncedAt} DESC`)
+          .limit(1);
+        
+        if (mostRecentOrder?.lastSyncedAt) {
+          syncStartDate = mostRecentOrder.lastSyncedAt;
+        } else {
+          // Default to 30 days ago at 00:00 UTC
+          syncStartDate = new Date();
+          syncStartDate.setDate(syncStartDate.getDate() - 30);
+          syncStartDate.setUTCHours(0, 0, 0, 0);
+        }
+      }
+
+      const fromDate = syncStartDate.toISOString();
+      console.log(`[Orders Sync] Starting sync from ${fromDate}`);
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let shippedDetectedCount = 0;
+      const changedOrderIds: string[] = [];
+      let hasMore = true;
+      let offset = 0;
+      const limit = 100;
+      let retryCount = 0;
+      const MAX_RETRIES = 3;
+
+      // Pagination loop with retry logic
+      while (hasMore) {
+        try {
+          // Fetch orders from eBay with pagination
+          const ebayResponse = await getOrders({
+            creationDateFrom: fromDate,
+            limit,
+            offset,
+          });
+
+          if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          // Process each order
+          for (const ebayOrder of ebayResponse.orders) {
+            try {
+              // Process order in transaction for atomicity
+              await db.transaction(async (tx) => {
+                const lineItem = ebayOrder.lineItems?.[0];
+                if (!lineItem) return;
+
+                // Check if order already exists
+                const [existingOrder] = await tx
+                  .select()
+                  .from(orders)
+                  .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+
+                // Extract shipping address
+                const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+                const shipToFullAddress = shipTo?.contactAddress ? {
+                  name: shipTo.fullName || '',
+                  street1: shipTo.contactAddress.addressLine1 || '',
+                  street2: shipTo.contactAddress.addressLine2,
+                  city: shipTo.contactAddress.city || '',
+                  state: shipTo.contactAddress.stateOrProvince || '',
+                  postalCode: shipTo.contactAddress.postalCode || '',
+                  country: shipTo.contactAddress.countryCode || 'US',
+                  phone: shipTo.primaryPhone?.phoneNumber,
+                } : null;
+
+                // Parse order amounts
+                const saleGrossCents = Math.round(
+                  parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+                );
+                const shippingCollectedCents = Math.round(
+                  parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
+                );
+
+                // Determine eBay fulfillment status
+                const ebayFulfillmentStatus = ebayOrder.orderFulfillmentStatus || 'NOT_STARTED';
+                const ebayIsShipped = ebayFulfillmentStatus === 'FULFILLED' || ebayFulfillmentStatus === 'IN_PROGRESS';
+
+                // Compute local shipping status
+                let computedShippingStatus: 'unshipped' | 'label_purchased' | 'shipped' = 'unshipped';
+                
+                if (ebayIsShipped) {
+                  computedShippingStatus = 'shipped';
+                } else if (existingOrder?.labelId) {
+                  // We have a local label but eBay doesn't show shipped
+                  computedShippingStatus = 'label_purchased';
+                }
+
+                // Drift detection: eBay shows shipped but local doesn't
+                let driftSnapshot = existingOrder?.driftSnapshot || [];
+                let driftDetected = false;
+                
+                if (existingOrder && ebayIsShipped && existingOrder.shippingStatus !== 'shipped') {
+                  driftDetected = true;
+                  shippedDetectedCount++;
+                  
+                  // Append drift entry matching schema
+                  const ebayTracking = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipment?.trackingNumber;
+                  const carrier = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipment?.carrier;
+                  
+                  const driftEntry = {
+                    detectedAt: new Date().toISOString(),
+                    field: 'shippingStatus',
+                    local: existingOrder.shippingStatus,
+                    ebay: 'shipped',
+                    note: `eBay marked as ${ebayFulfillmentStatus}${ebayTracking ? ` with tracking ${ebayTracking} (${carrier})` : ''}`,
+                  };
+                  
+                  driftSnapshot = [...driftSnapshot, driftEntry];
+                  computedShippingStatus = 'shipped';
+                  
+                  console.log(`[Drift] Order ${ebayOrder.orderId} marked shipped in eBay but not locally`);
+                }
+
+                if (existingOrder) {
+                  // Update existing order
+                  await tx
+                    .update(orders)
+                    .set({
+                      title: lineItem.title,
+                      buyerName: shipTo?.fullName || null,
+                      shipToFullAddress,
+                      quantityOrdered: lineItem.quantity || 1,
+                      paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : existingOrder.paidTime,
+                      fulfillmentStatus: ebayFulfillmentStatus,
+                      shippingStatus: computedShippingStatus,
+                      ...(driftDetected && {
+                        driftSnapshot,
+                        driftDetectedAt: new Date(),
+                      }),
+                      lastSyncedAt: new Date(),
+                      lastSyncSource: 'manual_sync',
+                    })
+                    .where(eq(orders.orderId, existingOrder.orderId));
+
+                  updatedCount++;
+                  changedOrderIds.push(ebayOrder.orderId);
+                } else {
+                  // Find listing by SKU or line item ID
+                  const [listing] = await tx
+                    .select()
+                    .from(listings)
+                    .where(
+                      lineItem.sku 
+                        ? eq(listings.ebaySku, lineItem.sku)
+                        : eq(listings.ebayItemId, lineItem.lineItemId)
+                    );
+
+                  if (!listing) {
+                    console.warn(`[Orders Sync] Listing not found for SKU ${lineItem.sku} or item ${lineItem.lineItemId}`);
+                    return;
+                  }
+
+                  // Get or create buyer
+                  const buyerUsername = ebayOrder.buyer?.username || "unknown";
+                  let [buyer] = await tx
+                    .select()
+                    .from(buyers)
+                    .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+
+                  if (!buyer) {
+                    [buyer] = await tx
+                      .insert(buyers)
+                      .values({
+                        ebayBuyerUsername: buyerUsername,
+                        emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                      })
+                      .returning();
+                  }
+
+                  // Create new order
+                  const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+                  
+                  await tx
+                    .insert(orders)
+                    .values({
+                      ebayOrderId: ebayOrder.orderId,
+                      ebaySku: lineItem.sku || listing.ebaySku || '',
+                      listingId: listing.listingId,
+                      title: lineItem.title,
+                      buyerId: buyer.buyerId,
+                      buyerUsername,
+                      buyerName: shipTo?.fullName || null,
+                      shipToFullAddress,
+                      saleGrossCents,
+                      shippingCollectedCents,
+                      ebayFeesCents: ebayFinalValueFee,
+                      payoutCents: 0,
+                      quantityOrdered: lineItem.quantity || 1,
+                      orderDate: new Date(ebayOrder.creationDate),
+                      paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : null,
+                      shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
+                        ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
+                        : null,
+                      fulfillmentStatus: ebayFulfillmentStatus,
+                      status: "paid",
+                      shippingStatus: computedShippingStatus,
+                      lastSyncedAt: new Date(),
+                      lastSyncSource: 'manual_sync',
+                    });
+
+                  createdCount++;
+                  changedOrderIds.push(ebayOrder.orderId);
+                }
+              });
+            } catch (error: any) {
+              console.error(`[Orders Sync] Failed to sync order ${ebayOrder.orderId}:`, error);
+              // Continue with next order
+            }
+          }
+
+          // Check if there are more pages
+          // eBay returns fewer orders than limit when we've reached the end
+          if (ebayResponse.orders.length < limit) {
+            hasMore = false;
+          } else {
+            offset += limit;
+            // Additional check: eBay may include 'total' field to verify
+            if (ebayResponse.total && offset >= ebayResponse.total) {
+              hasMore = false;
+            }
+          }
+
+          // Reset retry count on successful page
+          retryCount = 0;
+
+        } catch (error: any) {
+          // Handle 429 rate limiting with exponential backoff
+          if (error.message?.includes('429') || error.message?.includes('Too Many Requests')) {
+            retryCount++;
+            
+            if (retryCount >= MAX_RETRIES) {
+              console.error('[Orders Sync] Max retries reached for rate limiting');
+              throw new Error('eBay API rate limit exceeded - max retries reached');
+            }
+
+            const backoffMs = Math.min(1000 * Math.pow(2, retryCount), 10000);
+            console.log(`[Orders Sync] Rate limited, retrying in ${backoffMs}ms (attempt ${retryCount}/${MAX_RETRIES})`);
+            
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+            continue; // Retry the same page
+          }
+
+          throw error; // Re-throw non-429 errors
+        }
+      }
+
+      const syncedCount = createdCount + updatedCount;
+      const lastEvaluatedAt = new Date().toISOString();
+
+      console.log(`[Orders Sync] Complete: ${createdCount} created, ${updatedCount} updated, ${shippedDetectedCount} drift detected`);
+
+      res.json({
+        syncedCount,
+        createdCount,
+        updatedCount,
+        shippedDetectedCount,
+        lastEvaluatedAt,
+        changedOrderIds: changedOrderIds.slice(0, 10), // Sample of first 10
+      });
+
+    } catch (error: any) {
+      console.error('[Orders Sync] Error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Purchase shipping label for an order
   app.post("/api/orders/:orderId/ship", async (req, res) => {
     try {
@@ -3190,205 +3476,228 @@ Output only JSON:
 
   const httpServer = createServer(app);
 
-  // Background job: Periodically sync eBay orders
-  // Runs every hour to fetch new orders and create ledger entries
-  const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-  const AUTO_SYNC_DAYS_BACK = 7; // Sync orders from last 7 days
+  // Background job: Periodically sync eBay orders with drift detection
+  // Runs every 15 minutes to fetch new/updated orders from eBay
+  const SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+  let lastSuccessfulSyncTimestamp: Date | null = null;
 
   async function autoSyncOrders() {
     try {
-      console.log("Auto-syncing eBay orders...");
+      console.log("[Auto-Sync] Starting background eBay orders sync...");
       
-      const creationDateFrom = new Date();
-      creationDateFrom.setDate(creationDateFrom.getDate() - AUTO_SYNC_DAYS_BACK);
-      const fromDate = creationDateFrom.toISOString();
-
-      const ebayResponse = await getOrders({
-        creationDateFrom: fromDate,
-        limit: 200,
-      });
-
-      if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
-        console.log("No new orders to sync");
-        return;
+      // Find the most recent lastSyncedAt from orders table for smart defaults
+      const [mostRecentOrder] = await db
+        .select({ lastSyncedAt: orders.lastSyncedAt })
+        .from(orders)
+        .where(sql`${orders.lastSyncedAt} IS NOT NULL`)
+        .orderBy(sql`${orders.lastSyncedAt} DESC`)
+        .limit(1);
+      
+      let syncStartDate: Date;
+      if (lastSuccessfulSyncTimestamp) {
+        syncStartDate = lastSuccessfulSyncTimestamp;
+      } else if (mostRecentOrder?.lastSyncedAt) {
+        syncStartDate = mostRecentOrder.lastSyncedAt;
+      } else {
+        // Default to 30 days ago at 00:00 UTC
+        syncStartDate = new Date();
+        syncStartDate.setDate(syncStartDate.getDate() - 30);
+        syncStartDate.setUTCHours(0, 0, 0, 0);
       }
 
-      let syncedCount = 0;
+      const fromDate = syncStartDate.toISOString();
+      console.log(`[Auto-Sync] Syncing from ${fromDate}`);
+
+      let createdCount = 0;
       let updatedCount = 0;
+      let shippedDetectedCount = 0;
+      let offset = 0;
+      const limit = 100;
+      let hasMore = true;
 
-      for (const ebayOrder of ebayResponse.orders) {
-        try {
-          // Wrap each order sync in a transaction for atomicity
-          await db.transaction(async (tx) => {
-            const [existingOrder] = await tx
-              .select()
-              .from(orders)
-              .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+      // Pagination loop with drift detection
+      while (hasMore) {
+        const ebayResponse = await getOrders({
+          creationDateFrom: fromDate,
+          limit,
+          offset,
+        });
 
-            if (existingOrder) {
-              updatedCount++;
-              return;
-            }
+        if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
+          hasMore = false;
+          break;
+        }
 
-            const lineItem = ebayOrder.lineItems?.[0];
-            if (!lineItem) return;
+        // Process each order with drift detection (matching manual sync endpoint logic)
+        for (const ebayOrder of ebayResponse.orders) {
+          try {
+            await db.transaction(async (tx) => {
+              const lineItem = ebayOrder.lineItems?.[0];
+              if (!lineItem) return;
 
-            const [listing] = await tx
-              .select()
-              .from(listings)
-              .where(eq(listings.ebayItemId, lineItem.lineItemId));
+              const [existingOrder] = await tx
+                .select()
+                .from(orders)
+                .where(eq(orders.ebayOrderId, ebayOrder.orderId));
 
-            if (!listing) {
-              console.warn(`Listing not found for eBay item ${lineItem.lineItemId}`);
-              return;
-            }
+              // Extract shipping address
+              const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+              const shipToFullAddress = shipTo?.contactAddress ? {
+                name: shipTo.fullName || '',
+                street1: shipTo.contactAddress.addressLine1 || '',
+                street2: shipTo.contactAddress.addressLine2,
+                city: shipTo.contactAddress.city || '',
+                state: shipTo.contactAddress.stateOrProvince || '',
+                postalCode: shipTo.contactAddress.postalCode || '',
+                country: shipTo.contactAddress.countryCode || 'US',
+                phone: shipTo.primaryPhone?.phoneNumber,
+              } : null;
 
-            const buyerUsername = ebayOrder.buyer?.username || "unknown";
-            let [buyer] = await tx
-              .select()
-              .from(buyers)
-              .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+              const saleGrossCents = Math.round(
+                parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+              );
+              const shippingCollectedCents = Math.round(
+                parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
+              );
 
-            if (!buyer) {
-              [buyer] = await tx
-                .insert(buyers)
-                .values({
-                  ebayBuyerUsername: buyerUsername,
-                  emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
-                })
-                .returning();
-            }
+              const ebayFulfillmentStatus = ebayOrder.orderFulfillmentStatus || 'NOT_STARTED';
+              const ebayIsShipped = ebayFulfillmentStatus === 'FULFILLED' || ebayFulfillmentStatus === 'IN_PROGRESS';
 
-            const saleGrossCents = Math.round(
-              parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
-            );
-            const shippingCollectedCents = Math.round(
-              parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
-            );
+              let computedShippingStatus: 'unshipped' | 'label_purchased' | 'shipped' = 'unshipped';
+              if (ebayIsShipped) {
+                computedShippingStatus = 'shipped';
+              } else if (existingOrder?.labelId) {
+                computedShippingStatus = 'label_purchased';
+              }
 
-            // eBay fees (final value fee + promotion fee)
-            // Note: eBay provides detailed fee breakdown in the transaction response
-            // For now, we'll estimate at 13.25% (typical eBay final value fee)
-            const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
-            const promotionFee = 0; // Would come from eBay transaction details
+              // Drift detection
+              let driftSnapshot = existingOrder?.driftSnapshot || [];
+              let driftDetected = false;
+              
+              if (existingOrder && ebayIsShipped && existingOrder.shippingStatus !== 'shipped') {
+                driftDetected = true;
+                shippedDetectedCount++;
+                
+                const ebayTracking = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipment?.trackingNumber;
+                const carrier = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipment?.carrier;
+                
+                const driftEntry = {
+                  detectedAt: new Date().toISOString(),
+                  field: 'shippingStatus',
+                  local: existingOrder.shippingStatus,
+                  ebay: 'shipped',
+                  note: `eBay marked as ${ebayFulfillmentStatus}${ebayTracking ? ` with tracking ${ebayTracking} (${carrier})` : ''}`,
+                };
+                
+                driftSnapshot = [...driftSnapshot, driftEntry];
+                computedShippingStatus = 'shipped';
+              }
 
-            const salesTaxCents = Math.round(
-              parseFloat(ebayOrder.pricingSummary?.totalTax?.value || "0") * 100
-            );
+              if (existingOrder) {
+                await tx
+                  .update(orders)
+                  .set({
+                    title: lineItem.title,
+                    buyerName: shipTo?.fullName || null,
+                    shipToFullAddress,
+                    quantityOrdered: lineItem.quantity || 1,
+                    paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : existingOrder.paidTime,
+                    fulfillmentStatus: ebayFulfillmentStatus,
+                    shippingStatus: computedShippingStatus,
+                    ...(driftDetected && {
+                      driftSnapshot,
+                      driftDetectedAt: new Date(),
+                    }),
+                    lastSyncedAt: new Date(),
+                    lastSyncSource: 'auto_sync',
+                  })
+                  .where(eq(orders.orderId, existingOrder.orderId));
 
-            // Extract shipping address from eBay order
-            const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
-            const shipToFullAddress = shipTo?.contactAddress ? {
-              name: shipTo.fullName || '',
-              street1: shipTo.contactAddress.addressLine1 || '',
-              street2: shipTo.contactAddress.addressLine2,
-              city: shipTo.contactAddress.city || '',
-              state: shipTo.contactAddress.stateOrProvince || '',
-              postalCode: shipTo.contactAddress.postalCode || '',
-              country: shipTo.contactAddress.countryCode || 'US',
-              phone: shipTo.primaryPhone?.phoneNumber,
-            } : null;
+                updatedCount++;
+              } else {
+                // Find listing and create new order
+                const [listing] = await tx
+                  .select()
+                  .from(listings)
+                  .where(
+                    lineItem.sku 
+                      ? eq(listings.ebaySku, lineItem.sku)
+                      : eq(listings.ebayItemId, lineItem.lineItemId)
+                  );
 
-            const [newOrder] = await tx
-              .insert(orders)
-              .values({
-                ebayOrderId: ebayOrder.orderId,
-                ebaySku: lineItem.sku || listing.ebaySku || '',
-                listingId: listing.listingId,
-                title: lineItem.title,
-                buyerId: buyer.buyerId,
-                buyerUsername,
-                buyerName: shipTo?.fullName || null,
-                shipToFullAddress,
-                saleGrossCents,
-                shippingCollectedCents,
-                ebayFeesCents: ebayFinalValueFee + promotionFee,
-                payoutCents: 0, // Updated when payout occurs
-                quantityOrdered: lineItem.quantity || 1,
-                orderDate: new Date(ebayOrder.creationDate),
-                paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : null,
-                shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
-                  ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
-                  : null,
-                fulfillmentStatus: ebayOrder.orderFulfillmentStatus,
-                status: "paid",
-                shippingStatus: "unshipped",
-                lastSyncedAt: new Date(),
-                lastSyncSource: "auto_sync",
-              })
-              .returning();
+                if (!listing) return;
 
-            const [inventoryItem] = await tx
-              .select()
-              .from(inventoryItems)
-              .where(eq(inventoryItems.inventoryId, listing.inventoryId));
+                const buyerUsername = ebayOrder.buyer?.username || "unknown";
+                let [buyer] = await tx
+                  .select()
+                  .from(buyers)
+                  .where(eq(buyers.ebayBuyerUsername, buyerUsername));
 
-            // Create ledger entries for this order
-            const ledgerEntries: InsertAccountingLedger[] = [];
+                if (!buyer) {
+                  [buyer] = await tx
+                    .insert(buyers)
+                    .values({
+                      ebayBuyerUsername: buyerUsername,
+                      emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                    })
+                    .returning();
+                }
 
-            // 1. Sale entry (credit - revenue)
-            ledgerEntries.push({
-              inventoryId: listing.inventoryId,
-              orderId: newOrder.orderId,
-              eventType: "sale",
-              amountCents: saleGrossCents,
-              direction: "credit",
-              note: `Sale: ${listing.title}`,
+                const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+                
+                await tx
+                  .insert(orders)
+                  .values({
+                    ebayOrderId: ebayOrder.orderId,
+                    ebaySku: lineItem.sku || listing.ebaySku || '',
+                    listingId: listing.listingId,
+                    title: lineItem.title,
+                    buyerId: buyer.buyerId,
+                    buyerUsername,
+                    buyerName: shipTo?.fullName || null,
+                    shipToFullAddress,
+                    saleGrossCents,
+                    shippingCollectedCents,
+                    ebayFeesCents: ebayFinalValueFee,
+                    payoutCents: 0,
+                    quantityOrdered: lineItem.quantity || 1,
+                    orderDate: new Date(ebayOrder.creationDate),
+                    paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : null,
+                    shipBy: ebayOrder.fulfillmentStartInstructions?.[0]?.shipByDate 
+                      ? new Date(ebayOrder.fulfillmentStartInstructions[0].shipByDate)
+                      : null,
+                    fulfillmentStatus: ebayFulfillmentStatus,
+                    status: "paid",
+                    shippingStatus: computedShippingStatus,
+                    lastSyncedAt: new Date(),
+                    lastSyncSource: 'auto_sync',
+                  });
+
+                createdCount++;
+              }
             });
+          } catch (error: any) {
+            console.error(`[Auto-Sync] Failed to sync order ${ebayOrder.orderId}:`, error);
+          }
+        }
 
-            // 2. eBay final value fee (debit - expense)
-            if (ebayFinalValueFee > 0) {
-              ledgerEntries.push({
-                inventoryId: listing.inventoryId,
-                orderId: newOrder.orderId,
-                eventType: "fee",
-                amountCents: ebayFinalValueFee,
-                direction: "debit",
-                note: "eBay final value fee",
-              });
-            }
-
-            // 3. Promotion fee if applicable (debit - expense)
-            if (promotionFee > 0) {
-              ledgerEntries.push({
-                inventoryId: listing.inventoryId,
-                orderId: newOrder.orderId,
-                eventType: "promotion_fee",
-                amountCents: promotionFee,
-                direction: "debit",
-                note: "eBay promotion fee",
-              });
-            }
-
-            // 4. Sales tax collected by marketplace (tracked separately for tax reporting)
-            if (salesTaxCents > 0) {
-              ledgerEntries.push({
-                inventoryId: listing.inventoryId,
-                orderId: newOrder.orderId,
-                eventType: "sales_tax_collected_by_marketplace",
-                amountCents: salesTaxCents,
-                direction: "credit",
-                note: "Sales tax collected by eBay (not taxable income)",
-              });
-            }
-
-            // Insert all ledger entries
-            await tx.insert(accountingLedger).values(ledgerEntries);
-
-            // Note: vine_items.status is NOT updated to "sold"
-            // Order existence now tracks sold status
-
-            syncedCount++;
-          });
-        } catch (error: any) {
-          console.error(`Failed to sync order ${ebayOrder.orderId}:`, error);
-          // Continue with next order instead of failing the entire sync
+        // Check pagination
+        if (ebayResponse.orders.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+          if (ebayResponse.total && offset >= ebayResponse.total) {
+            hasMore = false;
+          }
         }
       }
 
-      console.log(`Auto-sync complete: ${syncedCount} new orders, ${updatedCount} already existed`);
+      // Update last successful sync timestamp
+      lastSuccessfulSyncTimestamp = new Date();
+      
+      console.log(`[Auto-Sync] Complete: ${createdCount} created, ${updatedCount} updated, ${shippedDetectedCount} drift detected`);
     } catch (error: any) {
-      console.error("Error in auto-sync:", error);
+      console.error("[Auto-Sync] Error:", error);
     }
   }
 

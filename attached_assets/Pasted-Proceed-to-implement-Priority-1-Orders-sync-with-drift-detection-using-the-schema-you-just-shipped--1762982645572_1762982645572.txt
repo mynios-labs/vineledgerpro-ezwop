@@ -1,0 +1,86 @@
+Proceed to implement Priority 1. Orders sync with drift detection using the schema you just shipped. Do not change the listings flows.
+
+Build this endpoint now
+
+Endpoint: POST /api/sync/ebay/orders?since=ISO
+Purpose: Pull paid or partially fulfilled orders from eBay. Upsert locally. Detect drift. Update shippingStatus.
+
+Inputs and defaults
+
+since is optional. If omitted, default to the newest of:
+
+orders.max(lastSyncedAt)
+
+otherwise 30 days ago at 00:00 UTC.
+
+Source of truth
+
+eBay is the read source for orders. Local DB is cache and workflow state.
+
+Only write back to eBay during the shipping flow later when we post tracking.
+
+What to fetch
+
+Fetch orders for EBAY_US where order status is paid or partially fulfilled.
+
+Include line items with SKUs, buyer, ship-to address, totals, paid time, fulfillment info.
+
+Upsert rules
+
+Match on eBay order id plus line item id, or order id plus SKU if that is all we have.
+
+Store or update:
+
+ebayOrderId, ebaySku, title, quantityOrdered, buyerName, shipToFullAddress JSON, orderTotalCents, paidTime, shippedTime, fulfillmentStatus, trackingNumber, carrier.
+
+Compute and set shippingStatus:
+
+Unshipped when paid and no label yet.
+
+Label purchased when we have a local label but no eBay shipped event.
+
+Shipped when eBay shows shipped or we have posted tracking.
+
+Drift detection
+
+If eBay shows shipped and local shippingStatus is not Shipped, flip local to Shipped and append one entry to driftSnapshot with:
+
+type: "ebay_marked_shipped", seenAt, ebayTracking, carrier.
+
+Do not push any edits back to eBay in this sync.
+
+Pagination and rate limits
+
+Page through results. Respect eBay pagination.
+
+On 429 or Retry-After, back off and continue. Log retries in the trace.
+
+Idempotency
+
+Multiple calls with the same since must not duplicate rows or regress statuses.
+
+Response shape
+
+{ syncedCount, updatedCount, createdCount, shippedDetectedCount, lastEvaluatedAt }
+
+Include a small sample array of changed order ids for quick UI confirmation.
+
+Light automation
+
+Add a background job to call the endpoint every 15 minutes with a rolling since equal to the last successful sync timestamp stored server side.
+
+Add a Sync now button on the Orders page that hits this endpoint and refreshes the list.
+
+Acceptance tests Replit must run now
+
+Seed the test account with at least one paid order. Call POST /api/sync/ebay/orders with no since. Verify the order appears in DB and UI as Unshipped.
+
+Manually mark the order shipped in eBay. Call sync again. Verify shippingStatus flips to Shipped and a drift entry is appended.
+
+Call sync twice in a row with the same since. Verify no duplicates and stable counts.
+
+Force a 429 via throttling if possible. Verify retry with backoff and eventual success.
+
+Confirm the endpoint returns counts and a sample list of changed ids. The UI shows an alert badge when a new paid order appears.
+
+Keep the Health page and the fixed size, scrollable diagnostic modals pattern for any sync errors. Do not change listing creation or edit paths.

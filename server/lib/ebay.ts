@@ -363,6 +363,7 @@ export async function getOrders(params: {
   creationDateFrom?: string;
   creationDateTo?: string;
   limit?: number;
+  offset?: number;
 }): Promise<any> {
   const token = await getAccessToken();
   
@@ -375,6 +376,9 @@ export async function getOrders(params: {
   }
   if (params.limit) {
     queryParams.append("limit", params.limit.toString());
+  }
+  if (params.offset) {
+    queryParams.append("offset", params.offset.toString());
   }
 
   const response = await fetch(
