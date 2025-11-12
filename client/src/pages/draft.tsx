@@ -393,8 +393,13 @@ export default function DraftPage() {
         throw new Error("Please select a fulfillment policy");
       }
 
-      // DEBUG: Log title selection details
+      // Validate title length (eBay limit is 80 characters)
       const selectedTitleText = editableTitles[selectedTitle];
+      if (!selectedTitleText || selectedTitleText.length > 80) {
+        throw new Error("Title must be between 1 and 80 characters. Please select a different title.");
+      }
+
+      // DEBUG: Log title selection details
       console.log("[PUBLISH DEBUG] Title selection:", {
         selectedTitleIndex: selectedTitle,
         allTitles: editableTitles,
@@ -434,6 +439,11 @@ export default function DraftPage() {
         details: error.details || [error.message],
         failedStep: error.failedStep,
         trace: error.trace,
+      });
+      toast({
+        title: "Publish failed",
+        description: error.message,
+        variant: "destructive",
       });
     },
   });
@@ -668,34 +678,50 @@ export default function DraftPage() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
-                {editableTitles.map((title, index) => (
-                  <label
+                {editableTitles.map((title, index) => {
+                  const isTooLong = title.length > 80;
+                  return <label
                     key={index}
-                    className={`p-3 rounded-lg border-2 transition-all cursor-pointer ${
-                      selectedTitle === index
-                        ? "border-primary bg-accent"
-                        : "border-border"
+                    className={`p-3 rounded-lg border-2 transition-all ${
+                      isTooLong 
+                        ? "border-destructive/30 bg-destructive/5 cursor-not-allowed opacity-60" 
+                        : selectedTitle === index
+                          ? "border-primary bg-accent cursor-pointer"
+                          : "border-border cursor-pointer"
                     }`}
                     data-testid={`option-title-${index}`}
-                    onMouseEnter={() => setHoveredTitleIndex(index)}
+                    onMouseEnter={() => !isTooLong && setHoveredTitleIndex(index)}
                     onMouseLeave={() => setHoveredTitleIndex(null)}
+                    onClick={(e) => {
+                      if (isTooLong) {
+                        e.preventDefault();
+                      }
+                    }}
                   >
-                    <div className="flex items-start gap-2">
-                      <input
-                        type="radio"
-                        name="title-selection"
-                        value={index}
-                        checked={selectedTitle === index}
-                        onChange={() => setSelectedTitle(index)}
-                        className="mt-1 w-4 h-4 flex-shrink-0 cursor-pointer accent-primary"
-                        data-testid={`radio-title-${index}`}
-                      />
-                      <div className="flex-1 space-y-2">
-                        {index === 0 && (
-                          <Badge variant="outline" className="text-xs mb-1">
-                            Original Amazon Title
-                          </Badge>
-                        )}
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="title-selection"
+                          value={index}
+                          checked={selectedTitle === index}
+                          onChange={() => !isTooLong && setSelectedTitle(index)}
+                          disabled={isTooLong}
+                          className="mt-1 w-4 h-4 flex-shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+                          data-testid={`radio-title-${index}`}
+                        />
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {index === 0 && (
+                              <Badge variant="outline" className="text-xs">
+                                Original Amazon Title
+                              </Badge>
+                            )}
+                            {isTooLong && (
+                              <Badge variant="destructive" className="text-xs">
+                                Reference only
+                              </Badge>
+                            )}
+                          </div>
                         {editingTitleIndex === index ? (
                           <div className="space-y-1">
                             <Input
@@ -708,6 +734,7 @@ export default function DraftPage() {
                                 }
                               }}
                               autoFocus
+                              maxLength={80}
                               className="text-sm"
                               placeholder="Enter title..."
                               data-testid={`input-title-${index}`}
@@ -751,8 +778,8 @@ export default function DraftPage() {
                         )}
                       </div>
                     </div>
-                  </label>
-                ))}
+                  </label>;
+                })}
                 {generatingTitles && (
                   <div className="text-center py-4 text-sm text-muted-foreground">
                     <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
