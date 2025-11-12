@@ -21,6 +21,13 @@ interface ApiTraceStep {
   durationMs?: number;
 }
 
+interface EbayError {
+  errorId?: string;
+  message?: string;
+  longMessage?: string;
+  parameters?: { name: string; value: string }[];
+}
+
 interface PublishModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -30,10 +37,20 @@ interface PublishModalProps {
     offerId?: string;
     itemId?: string;
     viewUrl?: string;
+    reusingExistingOffer?: boolean;
+    diagnostics?: {
+      sku?: string;
+      packageWeightAndSize?: any;
+      fulfillmentPolicyId?: string;
+      categoryId?: string;
+      priceCents?: number;
+    };
     trace?: ApiTraceStep[];
     error?: string;
-    failedStep?: string;
+    failedStep?: ApiTraceStep;
     details?: string[];
+    ebayErrors?: EbayError[];
+    ebayErrorDetails?: any;
   };
 }
 
@@ -220,17 +237,44 @@ export function PublishModal({ isOpen, onClose, publishState, result }: PublishM
           {/* Success State */}
           {publishState === "success" && result?.itemId && (
             <div className="space-y-3">
-              <div className="p-4 rounded-lg border bg-card space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">eBay Item ID</span>
-                  <span className="text-sm font-mono" data-testid="text-item-id">
-                    {result.itemId}
-                  </span>
-                </div>
-                {result.offerId && (
+              <div className="p-4 rounded-lg border bg-card space-y-3">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Offer ID</span>
-                    <span className="text-sm font-mono text-muted-foreground">{result.offerId}</span>
+                    <span className="text-sm font-medium">eBay Item ID</span>
+                    <span className="text-sm font-mono" data-testid="text-item-id">
+                      {result.itemId}
+                    </span>
+                  </div>
+                  {result.offerId && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Offer ID</span>
+                      <span className="text-sm font-mono text-muted-foreground">{result.offerId}</span>
+                    </div>
+                  )}
+                  {result.reusingExistingOffer !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Offer Status</span>
+                      <Badge variant={result.reusingExistingOffer ? "secondary" : "default"} className="text-xs">
+                        {result.reusingExistingOffer ? "Reused Existing" : "Created New"}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+
+                {result.diagnostics && (
+                  <div className="pt-3 border-t space-y-2">
+                    <div className="text-xs font-semibold text-muted-foreground">Diagnostics</div>
+                    {result.diagnostics.packageWeightAndSize && (
+                      <div className="text-xs font-mono text-muted-foreground">
+                        Weight: {result.diagnostics.packageWeightAndSize.weight?.value} {result.diagnostics.packageWeightAndSize.weight?.unit} | 
+                        Dims: {result.diagnostics.packageWeightAndSize.dimensions?.length}×{result.diagnostics.packageWeightAndSize.dimensions?.width}×{result.diagnostics.packageWeightAndSize.dimensions?.height} {result.diagnostics.packageWeightAndSize.dimensions?.unit}
+                      </div>
+                    )}
+                    {result.diagnostics.fulfillmentPolicyId && (
+                      <div className="text-xs font-mono text-muted-foreground">
+                        Fulfillment Policy: {result.diagnostics.fulfillmentPolicyId}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -253,21 +297,67 @@ export function PublishModal({ isOpen, onClose, publishState, result }: PublishM
 
           {/* Error State */}
           {publishState === "error" && result?.error && (
-            <div className="p-4 rounded-lg border border-destructive bg-destructive/5">
-              <p className="text-sm font-medium text-destructive mb-2" data-testid="text-error-message">
-                {result.error}
-              </p>
-              {result.details && result.details.length > 0 && (
-                <ul className="text-sm text-muted-foreground space-y-1 mt-2">
-                  {result.details.map((detail, i) => (
-                    <li key={i}>• {detail}</li>
-                  ))}
-                </ul>
-              )}
-              {result.failedStep && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  Failed at: <span className="font-mono">{result.failedStep}</span>
+            <div className="space-y-3">
+              <div className="p-4 rounded-lg border border-destructive bg-destructive/5 space-y-3">
+                <p className="text-sm font-medium text-destructive" data-testid="text-error-message">
+                  {result.error}
                 </p>
+                
+                {/* Structured eBay Errors */}
+                {result.ebayErrors && result.ebayErrors.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-destructive">eBay Error Details:</div>
+                    {result.ebayErrors.map((err, i) => (
+                      <div key={i} className="p-2 bg-background rounded border border-destructive/30 space-y-1">
+                        {err.errorId && (
+                          <div className="text-xs font-mono text-destructive">[{err.errorId}]</div>
+                        )}
+                        <div className="text-sm">{err.message || err.longMessage}</div>
+                        {err.parameters && err.parameters.length > 0 && (
+                          <div className="text-xs font-mono text-muted-foreground">
+                            {err.parameters.map((p, j) => (
+                              <span key={j}>{p.name}: {p.value}{j < err.parameters!.length - 1 ? ', ' : ''}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Fallback generic details */}
+                {!result.ebayErrors && result.details && result.details.length > 0 && (
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    {result.details.map((detail, i) => (
+                      <li key={i}>• {detail}</li>
+                    ))}
+                  </ul>
+                )}
+
+                {result.failedStep && typeof result.failedStep === 'object' && (
+                  <p className="text-xs text-muted-foreground pt-2 border-t">
+                    Failed at: <span className="font-mono">{result.failedStep.step}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Complete eBay Error Response */}
+              {result.ebayErrorDetails && (
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="outline" className="w-full justify-between" size="sm">
+                      <span className="text-xs">Complete eBay Error Response</span>
+                      <ChevronDown className="w-4 h-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2 p-3 bg-muted rounded border">
+                      <pre className="text-xs font-mono overflow-x-auto">
+                        {JSON.stringify(result.ebayErrorDetails, null, 2)}
+                      </pre>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </div>
           )}

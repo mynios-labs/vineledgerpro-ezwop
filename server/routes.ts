@@ -1336,17 +1336,39 @@ Output only JSON:
       // Get or create merchant location
       const merchantLocationKey = await getOrCreateMerchantLocation();
 
+      // Validate business policies before creating/updating offer
+      const { getFulfillmentPolicies } = await import("./lib/ebay");
+      const policiesData = await getFulfillmentPolicies("EBAY_US");
+      const validFulfillmentPolicy = policiesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
+      
+      if (!validFulfillmentPolicy) {
+        throw new Error(
+          `Fulfillment policy ${fulfillmentPolicyId} not found or inactive. ` +
+          `Please select a valid policy from your eBay account's Business Policies.`
+        );
+      }
+      
+      console.log(`[Publish] Using fulfillment policy: ${validFulfillmentPolicy.name} (${fulfillmentPolicyId})`);
+
       // IDEMPOTENT FLOW: Detect existing offers
       const offersData = await getOffersBySku(sku, "EBAY_US", tracer);
       const existingOffers = offersData.offers || [];
-      const existingOffer = existingOffers.find((o: any) => o.marketplaceId === "EBAY_US");
+      
+      // Filter to only ACTIVE offers (exclude ENDED, WITHDRAWN, etc.)
+      const activeOffers = existingOffers.filter((o: any) => 
+        o.marketplaceId === "EBAY_US" && 
+        (o.status === "PUBLISHED" || o.status === "UNPUBLISHED")
+      );
+      const existingOffer = activeOffers[0]; // Use first active offer if multiple exist
 
       let offerId: string;
       let itemId: string | null = null;
+      let reusingExistingOffer = false;
 
       if (existingOffer) {
-        console.log(`[Publish] Found existing offer ${existingOffer.offerId} with status ${existingOffer.status}`);
+        console.log(`[Publish] Found existing ${existingOffer.status} offer ${existingOffer.offerId} for SKU ${sku}`);
         offerId = existingOffer.offerId;
+        reusingExistingOffer = true;
 
         // Compare existing offer with new data
         const comparison = compareOffers(existingOffer, {
@@ -1527,43 +1549,66 @@ Output only JSON:
         });
       }
 
-      // Return success with trace
+      // Return success with trace and diagnostic info
       res.json({ 
         success: true,
         listing,
         offerId,
         itemId,
-        viewUrl: `https://www.ebay.com/itm/${itemId}`,
+        viewUrl: itemId ? `https://www.ebay.com/itm/${itemId}` : undefined,
+        reusingExistingOffer,
+        diagnostics: {
+          sku,
+          packageWeightAndSize: inventoryItemPayload.packageWeightAndSize,
+          fulfillmentPolicyId,
+          categoryId,
+          priceCents: parseInt(priceCents),
+        },
         trace: tracer.getTrace(),
       });
     } catch (error: any) {
       console.error("[Publish] Error:", error.message);
       
-      // Parse eBay API errors for field-level details
-      let ebayErrors: any = {};
-      try {
-        const errorData = JSON.parse(error.message.split(' - ')[1] || '{}');
-        if (errorData.errors) {
-          errorData.errors.forEach((err: any) => {
-            const field = err.parameters?.[0]?.name || 'unknown';
-            ebayErrors[field] = err.message;
-          });
-        }
-      } catch (parseError) {
-        // Error message not parseable - use as-is
+      // Get the failed step from tracer which has the full eBay error response
+      const failedStep = tracer.getFailedStep();
+      let ebayErrorResponse: any = null;
+      
+      // Extract full eBay error structure from the failed step's response body
+      if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
+        ebayErrorResponse = failedStep.responseBody;
       }
 
-      const hasFieldErrors = Object.keys(ebayErrors).length > 0;
-      res.status(400).json({ 
+      // Build detailed error response with complete eBay error structure
+      const errorResponse: any = {
         success: false,
-        error: hasFieldErrors ? "eBay validation failed" : error.message,
-        ebayErrors: hasFieldErrors ? ebayErrors : undefined,
-        details: hasFieldErrors ? 
-          Object.entries(ebayErrors).map(([field, msg]) => `${field}: ${msg}`) :
-          [error.message],
+        error: error.message,
         trace: tracer.getTrace(),
-        failedStep: tracer.getFailedStep(),
-      });
+        failedStep,
+      };
+
+      // If we have a full eBay error response, include it verbatim
+      if (ebayErrorResponse?.errors) {
+        errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
+        errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
+        
+        // Create human-readable summary
+        errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+          const parts = [
+            err.errorId ? `[${err.errorId}]` : '',
+            err.message || err.longMessage || 'Unknown error',
+          ].filter(Boolean);
+          
+          if (err.parameters && err.parameters.length > 0) {
+            parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(', ')})`);
+          }
+          
+          return parts.join(' ');
+        });
+      } else {
+        errorResponse.details = [error.message];
+      }
+
+      res.status(400).json(errorResponse);
     }
   });
 

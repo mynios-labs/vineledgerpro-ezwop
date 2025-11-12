@@ -1,0 +1,33 @@
+Tell Replit the problem first
+
+The publish flow advanced, but it stopped on eBay seller eligibility. Your trace ends with a generic “account needs more information” message. That is not actionable. I need the exact eBay error object that blocked createOffer or publishOffer.
+
+Earlier you also hit “Offer already exists.” That suggests we may be creating a duplicate offer for the same SKU instead of reusing the existing one.
+
+What to do now
+
+Re-run the end-to-end test on the same “dog water” item and stop only if the listing is live or we have a blocking eBay eligibility error.
+
+Capture and show the precise blocking error in the results modal. Include status, errors[].errorId, errors[].message, errors[].longMessage, errors[].parameters, and the full request that triggered it.
+
+De-dup offers before creating a new one. For the SKU used in this test:
+
+Call GET /sell/inventory/v1/offer?sku={sku}.
+
+If an offer exists, use that offerId and proceed to publishOffer instead of creating a new one.
+
+If no offer exists, create one and publish.
+
+Verify policy linkage. Before createOffer, fetch and log the IDs we pass for payment, return, and fulfillment policies. Confirm they are active and owned by the account. If eBay rejects for inactive or foreign policy IDs, show that plainly in the modal and switch to the selected active policy from the draft page.
+
+Confirm weight and dimensions actually reached eBay. Log the packageWeightAndSize you send and echo it in the modal. We already patched this, so this is a guardrail.
+
+Results modal polish. Keep the fixed size and scrolling you just added. Ensure long arrays and JSON blocks collapse with a “Show more” toggle, not page-breaking.
+
+Loop until success. Start on Inventory, search “dog water,” select the exact ASIN B0DZC7ZBT8, click Create Listing, set the category, fulfillment policy, price, weight, dimensions, and upload the two real HTTPS images. Click Approve and Publish to eBay. If any error appears, fix the root cause and repeat the same script. No dummy data. No alternate listing.
+
+If the block really is account eligibility
+
+If eBay returns an eligibility error, surface the exact fields so we can fix the account. The modal must show the real error ID and message, not a paraphrase. Examples to look for and display verbatim: “SELLER_NOT_ELIGIBLE”, “ONBOARDING_REQUIRED”, “PAYMENTS_NOT_SETUP”, “POLICY_NOT_FOUND”. Do not proceed until this is resolved or the listing publishes.
+
+Run this loop now and report back in the modal with the full error payload or a success summary that includes the live listing ID and URL.
