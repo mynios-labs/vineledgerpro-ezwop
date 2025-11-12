@@ -1,0 +1,52 @@
+Add to the directive for Replit Agent
+Shipping flow controls
+
+After buying a label, do not auto mark as Shipped by default. Set status to Label purchased. Show two buttons: Print label and Confirm shipped. When the user clicks Confirm shipped, post tracking to eBay and flip to Shipped.
+
+Add a project setting to allow auto mark as Shipped immediately after label purchase. Default is off.
+
+Buyer change and exception handling
+
+On each Unshipped order card, add Edit before purchase. Allow changing service selection, signature required, insurance amount, and ship from preset.
+
+Add Address override with a warning and audit log. If Shippo flags risk, show an address correction modal.
+
+Add Void label within the carrier void window. If voided, refund and revert status to Unshipped.
+
+Add Reprint label that returns the existing PDF without a second charge.
+
+If a buyer requests expedited shipping after purchase, allow Upgrade service before Confirm shipped. Charge adjustment is manual for now and tracked in a note field.
+
+Sync truth model guardrails
+
+Orders list is always fetched from eBay first. Local rows are only caches for speed.
+
+On page load and every 15 minutes, run a light sync of orders updated since last check. Provide a Sync now button.
+
+If eBay shows an order as shipped outside the app, detect drift and update local status and timeline on the next sync.
+
+Listings scope reminder
+
+Keep your working create and edit listing flow.
+
+For listings not created by this app, show them read only with Pull fresh. No bulk push.
+
+Tests Replit must run, expanded
+
+Create a paid order. Sync orders. Verify Unshipped appears and an alert shows.
+
+Get rates. Change service and insurance. Buy label. Verify status is Label purchased.
+
+Print label. Do not mark shipped. Then click Confirm shipped. Verify tracking posted to eBay and local status is Shipped.
+
+Attempt to buy again on the same order. Verify the same label is returned.
+
+Void label within the carrier window. Verify refund and status returns to Unshipped.
+
+Send Shippo webhook updates. Verify the timeline reflects in transit and delivered events.
+
+Manually mark shipped on eBay for a different test order. Sync. Verify local status updates and drift note is recorded.
+
+Verify all error modals keep fixed size, scroll, and include full request and response with a copy all button.
+
+That keeps everything else exactly as already planned and implemented. It adds the Confirm shipped control, the minimal exception tools you will actually use, and the drift handling that prevents stale data without exploding scope.
