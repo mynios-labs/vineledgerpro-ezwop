@@ -12,6 +12,7 @@ import { z } from "zod";
 export const vineItemStatusEnum = pgEnum("vine_item_status", ["available", "returned", "discarded", "do_not_sell", "gone", "personal_use", "cancelled"]);
 export const listingStateEnum = pgEnum("listing_state", ["draft", "live", "ended"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"]);
+export const shippingStatusEnum = pgEnum("shipping_status", ["unshipped", "label_purchased", "shipped"]);
 export const eventTypeEnum = pgEnum("event_type", ["basis_add", "sale", "fee", "shipping_label", "label_refund", "return", "writeoff", "payout", "promotion_fee", "sales_tax_collected_by_marketplace"]);
 export const directionEnum = pgEnum("direction", ["debit", "credit"]);
 export const addressKindEnum = pgEnum("address_kind", ["po_profile", "street_profile"]);
@@ -110,21 +111,76 @@ export const orders = pgTable("orders", {
   ebayOrderId: text("ebay_order_id").notNull().unique(),
   listingId: varchar("listing_id").references(() => listings.listingId, { onDelete: "set null" }),
   ebaySku: text("ebay_sku").notNull(),
+  
+  // Item info (for quick reference)
+  title: text("title"),
+  
+  // Buyer info
   buyerId: varchar("buyer_id"),
   buyerUsername: text("buyer_username"),
+  buyerName: text("buyer_name"),
+  
+  // Shipping address (structured JSON matching Shippo schema)
+  shipToFullAddress: json("ship_to_full_address").$type<{
+    name: string;
+    company?: string;
+    street1: string;
+    street2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
+    phone?: string;
+    email?: string;
+  }>(),
+  
+  // Financial totals (keep separate for accounting/reporting)
   saleGrossCents: integer("sale_gross_cents").notNull(),
   shippingCollectedCents: integer("shipping_collected_cents").notNull().default(0),
   ebayFeesCents: integer("ebay_fees_cents").notNull().default(0),
   payoutCents: integer("payout_cents").notNull().default(0),
   quantityOrdered: integer("quantity_ordered").notNull().default(1),
+  
+  // Timestamps
   orderDate: timestamp("order_date").notNull(),
   paidTime: timestamp("paid_time"),
   shipBy: timestamp("ship_by"),
   shippedTime: timestamp("shipped_time"),
+  
+  // Shipping tracking
   tracking: text("tracking"),
   carrier: text("carrier"),
   fulfillmentStatus: text("fulfillment_status"),
   status: orderStatusEnum("status").notNull().default("pending"),
+  
+  // Local shipping workflow status (two-step ship)
+  shippingStatus: shippingStatusEnum("shipping_status").notNull().default("unshipped"),
+  
+  // Shippo label data (for reprint, void, refund)
+  labelUrl: text("label_url"),
+  labelId: text("label_id"),
+  labelPurchasedAt: timestamp("label_purchased_at"),
+  labelCanceledAt: timestamp("label_canceled_at"),
+  labelFormat: text("label_format"),
+  serviceLevel: text("service_level"),
+  packagePresetId: varchar("package_preset_id"),
+  shippoRateId: text("shippo_rate_id"),
+  shippingCostCents: integer("shipping_cost_cents"),
+  
+  // Drift detection (eBay vs local mismatches)
+  driftSnapshot: json("drift_snapshot").$type<Array<{
+    detectedAt: string;
+    field: string;
+    local: any;
+    ebay: any;
+    note: string;
+  }>>(),
+  driftDetectedAt: timestamp("drift_detected_at"),
+  driftResolvedAt: timestamp("drift_resolved_at"),
+  
+  // Sync bookkeeping
+  lastSyncedAt: timestamp("last_synced_at"),
+  lastSyncSource: text("last_sync_source"),
 });
 
 // Buyers table

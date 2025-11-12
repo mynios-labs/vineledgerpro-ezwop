@@ -1,0 +1,103 @@
+Answers to the three questions
+
+Should we scrap server/lib/ebaySync.ts?
+Keep it. Reuse the read paths and unit conversion. Remove or ignore any write-back or drift resolution that pushes data to eBay. Keep pagination, rate limit backoff, and transformation helpers.
+
+What is the priority order?
+Priority 1. Orders sync with drift detection.
+Priority 2. Two step shipping workflow with Shippo and tracking post to eBay.
+Priority 3. Read only view for external listings with a Pull fresh button.
+Priority 4. Small polish items like alert badges, webhooks, and the fixed size diagnostic modals on shipping errors.
+
+What schema changes do we keep?
+Keep lastSyncedAt and ebayOfferJson. Keep the orders table additions for buyer info, paid time, shipped time, tracking, fulfillment status. Keep driftSnapshot only as nullable JSON to record mismatches when found. No new fields are required for bulk reconciliation.
+
+Single directive for Replit Agent
+
+Keep as is
+
+Keep the existing listing creation and edit flow for app created listings.
+
+Keep Health page and diagnostic modals pattern.
+
+Keep ebaySync read helpers, pagination, unit conversion, and backoff. Do not write back to eBay from sync.
+
+Build now
+
+A) Orders sync and minimal drift
+
+Endpoint. POST /api/sync/ebay/orders?since=ISO. Fetch paid and partially fulfilled orders from eBay. Upsert locally.
+
+Stored fields. ebayOrderId, ebaySku, title, qty, buyerName, shipToFullAddress, totals, paidTime, shippedTime, fulfillmentStatus, trackingNumber, carrier.
+
+Local computed shippingStatus. Unshipped. Label purchased. Shipped.
+
+Drift detection. If eBay shows shipped and local does not. Flip local to Shipped. Append a drift note to driftSnapshot.
+
+Background. Every 15 minutes run a since-based sync. Add a Sync now button on the Orders page.
+
+B) Two step shipping workflow with Shippo
+
+Settings page additions. Shippo API key. Ship from address. Parcel presets. Signature required toggle. Default insurance amount.
+
+Rates. POST /api/orders/:id/rates returns top three rates with ETA and a link to See all.
+
+Buy. POST /api/orders/:id/buy with {rateToken, insurance, signature}. Purchase label. Persist label PDF URL and tracking. Do not mark shipped yet. Set status to Label purchased.
+
+Confirm shipped. POST /api/orders/:id/confirm-shipped. Post tracking to eBay. Flip to Shipped.
+
+Idempotency. Buying again for the same order returns the original label. Confirm shipped is safe to repeat.
+
+C) Orders UI
+
+New page /orders with tabs. Unshipped. Label purchased. Shipped.
+
+Unshipped card. Get rates button. Show three cheapest. Drawer for all rates.
+
+After Buy. Show Print label which opens the PDF. Show Confirm shipped.
+
+Timeline per order. Synced. Rates quoted. Label purchased. Tracking posted to eBay. Webhook updates.
+
+D) Buyer change and exceptions
+
+Before purchase. Allow editing service selection, signature, insurance, and ship from preset.
+
+Address correction modal if Shippo flags an issue. Allow override with a warning and an audit note.
+
+Void label inside carrier window. If voided, refund and revert to Unshipped.
+
+Reprint returns the same PDF. No second charge.
+
+Optional setting. Auto mark as shipped right after label purchase. Default off.
+
+E) External listings read only
+
+Listings created outside the app show read only. Add Pull fresh button per listing.
+
+No bulk push. No reconciliation editor in this phase.
+
+F) Diagnostics and UX standards
+
+All shipping and sync errors use the fixed width, scrollable modal with full request and response and a Copy all button.
+
+Units in the UI are ounces and inches. Convert precisely for each API.
+
+In app alert badge and simple email when a new paid order arrives.
+
+Acceptance tests Replit must run
+
+Create a real paid order. Run Sync now. Verify it appears under Unshipped and an alert shows.
+
+Get rates. Buy the cheapest. Verify status is Label purchased.
+
+Print label. Then Confirm shipped. Verify tracking posted to eBay and status is Shipped.
+
+Call Buy again on the same order. Verify the same label is returned.
+
+Void label inside the carrier window. Verify refund and status returns to Unshipped.
+
+Send a Shippo webhook event. Verify timeline updates to in transit and delivered.
+
+Manually mark a different order shipped on eBay. Sync. Verify local status updates and a drift note is recorded.
+
+Verify error modals keep fixed size and scroll and include full API request and response bodies.
