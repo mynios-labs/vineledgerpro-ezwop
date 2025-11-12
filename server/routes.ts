@@ -1298,7 +1298,9 @@ Output only JSON:
 
       // Create/update eBay inventory item
       const sku = `ITEM-${inventoryItem.inventoryId}`;
-      await createOrUpdateInventoryItemTraced(sku, {
+      
+      // Build inventory item payload with shipping package details
+      const inventoryItemPayload: any = {
         product: {
           title,
           description,
@@ -1311,7 +1313,25 @@ Output only JSON:
             quantity: 1,
           },
         },
-      }, tracer);
+      };
+
+      // Add package weight and dimensions (required by eBay)
+      if (weightOz && dimsL && dimsW && dimsH) {
+        inventoryItemPayload.packageWeightAndSize = {
+          weight: {
+            value: parseFloat(weightOz),
+            unit: "OUNCE",
+          },
+          dimensions: {
+            length: parseFloat(dimsL),
+            width: parseFloat(dimsW),
+            height: parseFloat(dimsH),
+            unit: "INCH",
+          },
+        };
+      }
+
+      await createOrUpdateInventoryItemTraced(sku, inventoryItemPayload, tracer);
 
       // Get or create merchant location
       const merchantLocationKey = await getOrCreateMerchantLocation();
