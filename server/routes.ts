@@ -13,6 +13,7 @@ import {
   inventoryItems,
   listings,
   orders,
+  orderTimelineEvents,
   buyers,
   accountingLedger,
   addressProfiles,
@@ -28,6 +29,8 @@ import {
   type InsertInventoryItem,
   type InsertListing,
   type InsertAccountingLedger,
+  type InsertOrderTimelineEvent,
+  insertOrderTimelineEventSchema,
   insertAmazon1099Schema,
   insertEbay1099Schema,
 } from "@shared/schema";
@@ -2007,6 +2010,77 @@ Output only JSON:
 
       res.json(stats);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create a timeline event for an order
+  app.post("/api/orders/:orderId/timeline", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+
+      // Verify order exists
+      const [order] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.orderId, orderId))
+        .limit(1);
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Validate request body
+      const validation = insertOrderTimelineEventSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validation.error.errors 
+        });
+      }
+
+      // Insert timeline event
+      const [event] = await db
+        .insert(orderTimelineEvents)
+        .values({
+          ...validation.data,
+          orderId,
+        })
+        .returning();
+
+      res.json(event);
+    } catch (error: any) {
+      console.error("[Timeline Event] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get timeline events for an order
+  app.get("/api/orders/:orderId/timeline", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+
+      // Verify order exists
+      const [order] = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.orderId, orderId))
+        .limit(1);
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Get timeline events ordered by creation time
+      const events = await db
+        .select()
+        .from(orderTimelineEvents)
+        .where(eq(orderTimelineEvents.orderId, orderId))
+        .orderBy(asc(orderTimelineEvents.createdAt));
+
+      res.json(events);
+    } catch (error: any) {
+      console.error("[Timeline Events] Error:", error);
       res.status(500).json({ error: error.message });
     }
   });

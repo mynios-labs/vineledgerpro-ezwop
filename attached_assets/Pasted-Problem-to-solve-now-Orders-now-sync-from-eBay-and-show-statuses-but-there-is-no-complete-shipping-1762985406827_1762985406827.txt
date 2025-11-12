@@ -1,0 +1,64 @@
+Problem to solve now
+
+Orders now sync from eBay and show statuses, but there is no complete shipping workflow. We need a controlled two step ship flow, buyer change handling before purchase, and lifecycle actions like void and reprint, all while keeping eBay as source of truth and preserving the fixed size scrollable diagnostics.
+
+Build next
+1) Shipping purchase and confirmation
+
+After a successful label purchase, do not auto mark as Shipped. Set shippingStatus = "label_purchased".
+
+Show two buttons on the order card: Print label and Confirm shipped.
+
+When Confirm shipped is clicked, post tracking to eBay, update local to shippingStatus = "shipped", and append a timeline event.
+
+Add a project setting in Settings to allow auto mark as Shipped immediately after label purchase. Default is off. If on, still post tracking to eBay right after purchase.
+
+2) Buyer change and exception handling before purchase
+
+On Unshipped orders, add Edit before purchase. Allow changing: carrier service selection, signature required, insurance amount, and ship from preset.
+
+Add Address override with warning text and an audit note. If Shippo flags a validation issue, show an address correction modal that lets the user accept the suggestion.
+
+Add Upgrade service option before Confirm shipped. This allows switching to a faster service if the buyer asks. Any price difference is recorded in a note field for now.
+
+3) Label lifecycle
+
+Reprint label returns the same existing PDF. No new charge.
+
+Void label within the carrier void window. If void is successful, refund and set shippingStatus = "unshipped". Log a timeline entry.
+
+Idempotency rule for buy: second call returns the existing label metadata without a second purchase.
+
+4) Truth model and sync guardrails
+
+Orders list is always read from eBay first. Local rows are a cache for speed only.
+
+On page load and every 15 minutes, run a light sync for orders updated since last check. Keep the Sync now button.
+
+If eBay shows an order shipped outside the app, detect drift on next sync, flip local to Shipped, and record a drift timeline entry.
+
+Listings scope reminder. Keep the working create and edit flow for app created listings. External listings remain read only with Pull fresh. No bulk push.
+
+5) Error modals and diagnostics
+
+All error dialogs for rates, buy, confirm ship, void, and reprint must keep the fixed width and scrollable body pattern already used.
+
+Include full API request and response bodies with a Copy all button.
+
+Acceptance tests Replit must run now
+
+Create a paid test order. Sync. Verify it appears as Unshipped and an alert badge shows.
+
+Get rates. Change service and insurance. Buy the label. Verify status is Label purchased.
+
+Print label. Then click Confirm shipped. Verify tracking posted to eBay and local status is Shipped.
+
+Call buy again on the same order. Verify the same label is returned and no duplicate Shippo charge.
+
+Void label within the carrier window. Verify refund and status returns to Unshipped.
+
+Send Shippo webhook updates. Verify the order timeline reflects in transit and delivered.
+
+Manually mark shipped on eBay for a different test order. Sync. Verify local flips to Shipped and a drift note is recorded.
+
+Confirm all error modals are fixed size, scroll, and include full request and response with Copy all.

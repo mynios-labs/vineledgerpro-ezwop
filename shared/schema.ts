@@ -14,6 +14,7 @@ export const listingStateEnum = pgEnum("listing_state", ["draft", "live", "ended
 export const orderStatusEnum = pgEnum("order_status", ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"]);
 export const shippingStatusEnum = pgEnum("shipping_status", ["unshipped", "label_purchased", "shipped"]);
 export const eventTypeEnum = pgEnum("event_type", ["basis_add", "sale", "fee", "shipping_label", "label_refund", "return", "writeoff", "payout", "promotion_fee", "sales_tax_collected_by_marketplace"]);
+export const timelineEventTypeEnum = pgEnum("timeline_event_type", ["label_purchased", "label_reprinted", "label_voided", "confirmed_shipped", "tracking_updated", "delivered", "in_transit", "drift_detected", "service_upgraded", "address_overridden"]);
 export const directionEnum = pgEnum("direction", ["debit", "credit"]);
 export const addressKindEnum = pgEnum("address_kind", ["po_profile", "street_profile"]);
 export const importStatusEnum = pgEnum("import_status", ["processing", "completed", "failed"]);
@@ -178,9 +179,34 @@ export const orders = pgTable("orders", {
   driftDetectedAt: timestamp("drift_detected_at"),
   driftResolvedAt: timestamp("drift_resolved_at"),
   
+  // Address override (for exception handling before purchase)
+  addressOverride: json("address_override").$type<{
+    name: string;
+    company?: string;
+    street1: string;
+    street2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
+    phone?: string;
+    email?: string;
+  }>(),
+  addressOverrideNote: text("address_override_note"),
+  
   // Sync bookkeeping
   lastSyncedAt: timestamp("last_synced_at"),
   lastSyncSource: text("last_sync_source"),
+});
+
+// Order Timeline Events table (append-only audit log for shipping workflow)
+export const orderTimelineEvents = pgTable("order_timeline_events", {
+  timelineId: varchar("timeline_id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.orderId, { onDelete: "cascade" }),
+  eventType: timelineEventTypeEnum("event_type").notNull(),
+  note: text("note"),
+  metadata: json("metadata").$type<Record<string, any>>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Buyers table
@@ -326,6 +352,14 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
     references: [buyers.buyerId],
   }),
   ledgerEntries: many(accountingLedger),
+  timelineEvents: many(orderTimelineEvents),
+}));
+
+export const orderTimelineEventsRelations = relations(orderTimelineEvents, ({ one }) => ({
+  order: one(orders, {
+    fields: [orderTimelineEvents.orderId],
+    references: [orders.orderId],
+  }),
 }));
 
 export const accountingLedgerRelations = relations(accountingLedger, ({ one }) => ({
@@ -346,6 +380,7 @@ export const insertVineItemSchema = createInsertSchema(vineItems).omit({ vineIte
 export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({ inventoryId: true });
 export const insertListingSchema = createInsertSchema(listings).omit({ listingId: true, publishedAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ orderId: true });
+export const insertOrderTimelineEventSchema = createInsertSchema(orderTimelineEvents).omit({ timelineId: true, orderId: true, createdAt: true });
 export const insertBuyerSchema = createInsertSchema(buyers).omit({ buyerId: true });
 export const insertAccountingLedgerSchema = createInsertSchema(accountingLedger).omit({ ledgerId: true, txDate: true });
 export const insertAddressProfileSchema = createInsertSchema(addressProfiles).omit({ profileId: true });
@@ -369,6 +404,8 @@ export type Listing = typeof listings.$inferSelect;
 export type InsertListing = z.infer<typeof insertListingSchema>;
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
+export type OrderTimelineEvent = typeof orderTimelineEvents.$inferSelect;
+export type InsertOrderTimelineEvent = z.infer<typeof insertOrderTimelineEventSchema>;
 export type Buyer = typeof buyers.$inferSelect;
 export type InsertBuyer = z.infer<typeof insertBuyerSchema>;
 export type AccountingLedger = typeof accountingLedger.$inferSelect;
