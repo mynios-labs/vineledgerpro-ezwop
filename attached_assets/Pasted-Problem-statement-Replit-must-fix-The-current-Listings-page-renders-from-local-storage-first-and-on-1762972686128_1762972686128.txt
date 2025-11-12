@@ -1,0 +1,127 @@
+Problem statement Replit must fix
+
+The current Listings page renders from local storage first and only writes to eBay on edits. This creates data drift when revisions or sales occur on eBay. It also misses listings that were created outside the app. There is no reconciliation step, no full account listing retrieval, and no order-aware quantity sync. The tool must make eBay the source of truth and continuously reconcile.
+
+Directives for Replit Agent
+
+Make eBay the source of truth on read
+
+On page load and on manual refresh, fetch all live and unpublished offers from eBay, not from the local DB.
+
+Use Sell Inventory and Offer APIs with Production token and headers:
+
+X-EBAY-C-MARKETPLACE-ID: EBAY_US
+
+Accept: application/json
+
+Content-Language: en-US
+
+Accept-Language: en-US
+
+Endpoints to use with pagination across the account:
+
+GET /sell/inventory/v1/offer?marketplaceId=EBAY_US&limit=200&offset=…
+
+For each offer, pull its inventory item to get quantity, images, package size, and aspects:
+
+GET /sell/inventory/v1/inventory_item/{sku}
+
+If you need item web data for the preview tile, call GET /sell/metadata/v1/… only if required. Do not add extra dependencies.
+
+After fetch, reconcile with local DB by SKU or offerId. Insert missing records. Update changed fields. Never assume local is correct if eBay disagrees.
+
+Reconciliation and drift warnings
+
+For each listing, compare these fields and flag drift: title, price, categoryId, quantity, fulfillmentPolicyId, returnPolicyId, paymentPolicyId, dimensions, weight, images.
+
+Show a small “Drift detected” badge on any card where local ≠ eBay. Provide two buttons:
+
+Sync from eBay. Overwrite local with eBay values.
+
+Push to eBay. Overwrite eBay with local values using the correct REST calls.
+
+Always show “Last synced at” per listing and for the account.
+
+Editing protocol and write order
+
+For edits from the UI, always write to eBay first, then update local after a successful 2xx.
+
+Price, title, category, policies, quantity, dimensions, images:
+
+Use Sell Inventory and Offer APIs. Example sequence:
+
+If quantity or images changed → PUT /sell/inventory/v1/inventory_item/{sku}
+
+If price or category or listing policies changed → PUT /sell/inventory/v1/offer/{offerId}
+
+After all eBay writes succeed, persist to local DB and clear any drift flags.
+
+On failure, show the full request and response JSON in the fixed-size scrollable modal you already added. Do not mutate local on failure.
+
+Full account listing visibility
+
+Add a “Show all” toggle that lists every offer returned by eBay, even if we have no local record yet.
+
+Provide “Adopt” action to pull any external listing into local tracking, pre-filling SKU, policies, and quantities from eBay.
+
+Handle ended, relisted, and duplicate offers
+
+When fetching offers, include states ACTIVE, PUBLISHED, UNPUBLISHED, ENDED. Render status badges.
+
+If multiple offers exist for the same SKU, mark them and provide a “Consolidate” helper that ends duplicates or selects the active one.
+
+Order-aware quantity and shipping pipeline
+
+Add an Orders module that polls eBay Fulfillment API for recent orders and links them to SKUs:
+
+GET /sell/fulfillment/v1/order?filter=creationdate:%5B{since}..%5D&limit=200
+
+On each order import:
+
+Create an Order record locally. Decrement local quantity to match eBay’s inventory for the SKU after fulfillment events.
+
+Expose actions to create a shipping label using the same label provider you already integrated. Store tracking, mark shipped by calling:
+
+POST /sell/fulfillment/v1/order/{orderId}/shipping_fulfillments
+
+Show Sold, Paid, Shipped counts on each listing card with “View Orders” drill-in.
+
+Background sync and manual control
+
+Add a “Sync All from eBay” button on the Listings page. It pulls offers, items, and recent orders, runs reconciliation, and updates local.
+
+Schedule a lightweight background poll every 10 minutes that only pulls changes since the last sync using stored timestamps. If you cannot schedule in this environment, keep the manual button and prompt the user if the last sync is older than 30 minutes.
+
+Robust pagination and rate handling
+
+Implement pagination for listing fetch and order fetch. Limit 200 per page. Iterate until done.
+
+Back off on HTTP 429 using the Retry-After header. Surface a clear message in the modal when throttled.
+
+Security and headers
+
+Always use Production token. Display current OAuth scopes and identity in the modal header for every eBay call so we can audit scope mismatches quickly.
+
+Always send X-EBAY-C-MARKETPLACE-ID: EBAY_US on Sell Account and Sell Inventory calls.
+
+QA script the Agent must run to completion
+
+Load Listings page. Click “Sync All from eBay”. Confirm at least the known water dispenser appears with correct offerId and quantity.
+
+Edit the price by 1 dollar. Save. Confirm a 2xx from eBay, modal logs the request, and the new price appears on eBay and locally after refresh.
+
+From Seller Hub, manually change the title. Back in the app, click “Sync All from eBay”. Confirm drift is detected and cleared after sync.
+
+Create a test order in Sandbox-like flow is not allowed in Prod. Instead, use Fulfillment API to pull the most recent orders and verify the Orders table populates. If none exist, the page must show “No recent orders” without error.
+
+End the listing from the app. Confirm the offer is ENDED on eBay and the card updates.
+
+UI details to lock down
+
+Listings grid and dialogs must be a fixed max width and max height with internal scrolling. No overflow outside the viewport.
+
+Add “Copy trace” on every API call section so we can paste exact diagnostics when something breaks.
+
+One thing not to do
+
+Do not cache eBay policy lists or offers longer than the current session unless you also show a “Refreshed at” timestamp and detect drift.
