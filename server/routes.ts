@@ -2559,8 +2559,18 @@ Output only JSON:
       // 2. Check user identity
       try {
         const identityResponse = await fetch(`${EBAY_API_BASE}/commerce/identity/v1/user`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            "Accept": "application/json",
+            "Content-Language": "en-US",
+            "Accept-Language": "en-US"
+          }
         });
+        
+        if (!identityResponse.ok) {
+          throw new Error(`Identity API returned ${identityResponse.status}: ${await identityResponse.text()}`);
+        }
+        
         const identityData = await identityResponse.json();
         
         const expectedUsername = "antonioomar"; // From the guide
@@ -2591,28 +2601,47 @@ Output only JSON:
 
       // 3. Check payment policies
       try {
-        const paymentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/payment_policy`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const paymentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/payment_policy?marketplace_id=EBAY_US`, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+            "Accept": "application/json",
+            "Content-Language": "en-US",
+            "Accept-Language": "en-US"
+          }
         });
+        
+        if (!paymentResponse.ok) {
+          throw new Error(`Payment policy API returned ${paymentResponse.status}: ${await paymentResponse.text()}`);
+        }
+        
         const paymentData = await paymentResponse.json();
         
+        // Log raw response for debugging
+        console.log("[Health Check] Payment policy raw response:", JSON.stringify(paymentData, null, 2));
+        
+        // Note: eBay Sell Account API doesn't include status field - policies returned are active by definition
         const usPolicies = paymentData.paymentPolicies?.filter((p: any) => 
           p.marketplaceId === "EBAY_US"
         ) || [];
-        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+        
+        // Log what we found for debugging
+        console.log("[Health Check] Payment policies:", {
+          total: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({ id: p.paymentPolicyId, name: p.name, marketplaceId: p.marketplaceId }))
+        });
 
         results.checks.paymentPolicies = {
-          status: activePolicies.length > 0 ? "pass" : "fail",
+          status: usPolicies.length > 0 ? "pass" : "fail",
           totalPolicies: usPolicies.length,
-          activePolicies: activePolicies.length,
-          policies: activePolicies.map((p: any) => ({
+          activePolicies: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({
             id: p.paymentPolicyId,
-            name: p.name,
-            status: p.status
+            name: p.name
           })),
-          message: activePolicies.length > 0 
-            ? `Found ${activePolicies.length} active US payment policy(ies)`
-            : "No active US payment policies - configure in eBay Seller Hub > Business Policies"
+          message: usPolicies.length > 0 
+            ? `Found ${usPolicies.length} US payment policy(ies): ${usPolicies.map((p: any) => p.name).join(', ')}`
+            : "No US payment policies found - configure in eBay Seller Hub > Business Policies"
         };
 
         if (results.checks.paymentPolicies.status === "pass") {
@@ -2630,28 +2659,47 @@ Output only JSON:
 
       // 4. Check return policies
       try {
-        const returnResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/return_policy`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const returnResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/return_policy?marketplace_id=EBAY_US`, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+            "Accept": "application/json",
+            "Content-Language": "en-US",
+            "Accept-Language": "en-US"
+          }
         });
+        
+        if (!returnResponse.ok) {
+          throw new Error(`Return policy API returned ${returnResponse.status}: ${await returnResponse.text()}`);
+        }
+        
         const returnData = await returnResponse.json();
         
+        // Log raw response for debugging
+        console.log("[Health Check] Return policy raw response:", JSON.stringify(returnData, null, 2));
+        
+        // Note: eBay Sell Account API doesn't include status field - policies returned are active by definition
         const usPolicies = returnData.returnPolicies?.filter((p: any) => 
           p.marketplaceId === "EBAY_US"
         ) || [];
-        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+        
+        // Log what we found for debugging
+        console.log("[Health Check] Return policies:", {
+          total: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({ id: p.returnPolicyId, name: p.name, marketplaceId: p.marketplaceId }))
+        });
 
         results.checks.returnPolicies = {
-          status: activePolicies.length > 0 ? "pass" : "fail",
+          status: usPolicies.length > 0 ? "pass" : "fail",
           totalPolicies: usPolicies.length,
-          activePolicies: activePolicies.length,
-          policies: activePolicies.map((p: any) => ({
+          activePolicies: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({
             id: p.returnPolicyId,
-            name: p.name,
-            status: p.status
+            name: p.name
           })),
-          message: activePolicies.length > 0 
-            ? `Found ${activePolicies.length} active US return policy(ies)`
-            : "No active US return policies - configure in eBay Seller Hub > Business Policies"
+          message: usPolicies.length > 0 
+            ? `Found ${usPolicies.length} US return policy(ies): ${usPolicies.map((p: any) => p.name).join(', ')}`
+            : "No US return policies found - configure in eBay Seller Hub > Business Policies"
         };
 
         if (results.checks.returnPolicies.status === "pass") {
@@ -2669,28 +2717,47 @@ Output only JSON:
 
       // 5. Check fulfillment policies
       try {
-        const fulfillmentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/fulfillment_policy`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const fulfillmentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_US`, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+            "Accept": "application/json",
+            "Content-Language": "en-US",
+            "Accept-Language": "en-US"
+          }
         });
+        
+        if (!fulfillmentResponse.ok) {
+          throw new Error(`Fulfillment policy API returned ${fulfillmentResponse.status}: ${await fulfillmentResponse.text()}`);
+        }
+        
         const fulfillmentData = await fulfillmentResponse.json();
         
+        // Log raw response for debugging
+        console.log("[Health Check] Fulfillment policy raw response:", JSON.stringify(fulfillmentData, null, 2));
+        
+        // Note: eBay Sell Account API doesn't include status field - policies returned are active by definition
         const usPolicies = fulfillmentData.fulfillmentPolicies?.filter((p: any) => 
           p.marketplaceId === "EBAY_US"
         ) || [];
-        const activePolicies = usPolicies.filter((p: any) => p.status === "ACTIVE");
+        
+        // Log what we found for debugging
+        console.log("[Health Check] Fulfillment policies:", {
+          total: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({ id: p.fulfillmentPolicyId, name: p.name, marketplaceId: p.marketplaceId }))
+        });
 
         results.checks.fulfillmentPolicies = {
-          status: activePolicies.length > 0 ? "pass" : "fail",
+          status: usPolicies.length > 0 ? "pass" : "fail",
           totalPolicies: usPolicies.length,
-          activePolicies: activePolicies.length,
-          policies: activePolicies.map((p: any) => ({
+          activePolicies: usPolicies.length,
+          policies: usPolicies.map((p: any) => ({
             id: p.fulfillmentPolicyId,
-            name: p.name,
-            status: p.status
+            name: p.name
           })),
-          message: activePolicies.length > 0 
-            ? `Found ${activePolicies.length} active US fulfillment policy(ies)`
-            : "No active US fulfillment policies - configure in eBay Seller Hub > Business Policies"
+          message: usPolicies.length > 0 
+            ? `Found ${usPolicies.length} US fulfillment policy(ies): ${usPolicies.map((p: any) => p.name).join(', ')}`
+            : "No US fulfillment policies found - configure in eBay Seller Hub > Business Policies"
         };
 
         if (results.checks.fulfillmentPolicies.status === "pass") {

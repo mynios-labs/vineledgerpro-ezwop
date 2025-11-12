@@ -1,0 +1,135 @@
+You’re right. The account has the three business policies. The problem is in our app’s eBay calls and publish flow, not your account.
+
+Here is the exact bug report and the fix instructions for Replit Agent.
+
+Problem to fix
+
+The Health Check says “0 policies” while Seller Hub shows active Payment, Fulfillment, and Return policies. That means our Sell Account API calls are not returning the real policies. The most likely causes are:
+
+Wrong marketplace header on Sell Account endpoints. Missing or incorrect X-EBAY-C-MARKETPLACE-ID: EBAY_US.
+
+Using a cached or Sandbox token. EBAY_ENV or token origin mismatch.
+
+Missing scopes on the token when calling Sell Account. Must include https://api.ebay.com/oauth/api_scope/sell.account.
+
+Filtering logic is wrong. We may be filtering out valid policies or only reading default flags.
+
+Not passing Accept: application/json or sending an Accept-Language that hides policies.
+
+Because the app believes there are no policies, the publish step either skips policy IDs or sends empty IDs. eBay then blocks the listing and we chase the wrong error.
+
+What to do
+A. Verify token, identity, and scopes
+
+Log the token scopes the app is using for all Sell calls. Show them in the modal. They must include:
+
+https://api.ebay.com/oauth/api_scope
+
+https://api.ebay.com/oauth/api_scope/sell.inventory
+
+https://api.ebay.com/oauth/api_scope/sell.fulfillment
+
+https://api.ebay.com/oauth/api_scope/sell.account
+
+Call GET https://api.ebay.com/commerce/identity/v1/user and display username. It must be antonioomar. If not, stop and show the full JSON.
+
+B. Call Sell Account with the correct headers and no caching
+
+For each endpoint below, use Production token and headers:
+
+Authorization: Bearer <access token>
+
+Content-Language: en-US
+
+Accept-Language: en-US
+
+Accept: application/json
+
+X-EBAY-C-MARKETPLACE-ID: EBAY_US
+
+Endpoints to fetch:
+
+GET /sell/account/v1/payment_policy
+
+GET /sell/account/v1/fulfillment_policy
+
+GET /sell/account/v1/return_policy
+
+Do not cache these results. Bypass any memoization. Show the raw JSON arrays in the Publish modal and on the Health page so we can see IDs, names, marketplaceId, status, and default flags.
+
+C. Fix policy selection and publish payload
+
+Implement robust selection for each policy type:
+
+Prefer default on marketplaceId === "EBAY_US" and status === "ACTIVE".
+
+If no default exists, pick the first active policy for EBAY_US.
+
+Never return zero once at least one active policy exists.
+
+In the offer creation/update payloads, always include:
+
+paymentPolicyId with a valid Payment policy ID
+
+fulfillmentPolicyId with a valid Fulfillment policy ID
+
+returnPolicyId with a valid Return policy ID
+Confirm the IDs you send are the same as those shown in the Health page.
+
+D. Tighten Health Check
+
+Update /api/health/ebay-prerequisites to:
+
+Pass the marketplace header.
+
+Display counts and list the IDs found per type.
+
+Mark PASS when at least one active EBAY_US policy exists per type.
+
+Show the exact headers and the first 200 chars of each response in a diagnostics drawer.
+
+E. Re-run the real E2E loop until success
+
+Run the same full test loop with real data only. No placeholders.
+
+Inventory → search “dog water”.
+
+Select ASIN B0DZC7ZBT8.
+
+Create Listing.
+
+Category: Dishes, Feeders & Fountains ID 177789.
+
+Fulfillment policy: Free Domestic Shipping.
+
+Dimensions, price, and two HTTPS photos as shown.
+
+Title under 80 characters.
+
+Approve & Publish to eBay.
+
+On any failure, open the fixed-size scrollable modal and include:
+
+Method, URL, request headers, request body.
+
+Response status, headers, body.
+
+Token scopes in use.
+
+Chosen paymentPolicyId, fulfillmentPolicyId, returnPolicyId sent.
+
+Keep iterating and fixing only actual defects until the item publishes successfully. Do not create any other listings.
+
+F. Success criteria
+
+Publish succeeds and the modal shows:
+
+Offer ID and Listing ID.
+
+The three policy IDs used.
+
+The SKU used.
+
+A link to the live listing or the listing ID for manual verification in Seller Hub.
+
+If the policy calls still return empty after adding the marketplace header, show the full raw responses and request headers in the modal so we can see exactly what eBay returns with this token.

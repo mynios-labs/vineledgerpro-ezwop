@@ -411,12 +411,8 @@ let fulfillmentPoliciesCache: any = null;
 let fulfillmentPoliciesCacheExpiry: number = 0;
 
 export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"): Promise<any> {
-  // Check cache
-  if (fulfillmentPoliciesCache && Date.now() < fulfillmentPoliciesCacheExpiry) {
-    return fulfillmentPoliciesCache;
-  }
-
-  console.log("[eBay] Fetching fulfillment policies from Account API");
+  // NOTE: Caching disabled per user request to ensure fresh policy data
+  console.log("[eBay] Fetching fulfillment policies from Account API (no cache)");
   const token = await getAccessToken();
 
   const response = await fetch(
@@ -424,7 +420,10 @@ export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"):
     {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
+        "Accept": "application/json",
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US",
       },
     }
   );
@@ -436,12 +435,8 @@ export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"):
   }
 
   const data = await response.json();
-  
-  // Cache for 15 minutes
-  fulfillmentPoliciesCache = data;
-  fulfillmentPoliciesCacheExpiry = Date.now() + (15 * 60 * 1000);
 
-  console.log(`[eBay] Cached ${data.fulfillmentPolicies?.length || 0} fulfillment policies`);
+  console.log(`[eBay] Retrieved ${data.fulfillmentPolicies?.length || 0} fulfillment policies for ${marketplaceId}`);
   return data;
 }
 
