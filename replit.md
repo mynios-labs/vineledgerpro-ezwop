@@ -3,84 +3,6 @@
 ## Overview
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
-## Recent Updates (November 2025)
-- **Draft Listing Critical Fixes** (Nov 12): Resolved fulfillment policy sync, title validation, and localStorage persistence issues
-  - **Bidirectional Fulfillment Policy Sync**: Policy selection auto-syncs shipping mode ("Free Domestic Shipping" → "Include in price", "Buyer Pays" → "Charge separately") and vice versa
-  - **LocalStorage Persistence**: Fulfillment policy and shipping mode selections persist per vineItemId with validation on load (removes invalid/inactive policies)
-  - **Title Validation UI**: Titles >80 chars marked as "Reference only" with disabled radio buttons, red border, and reduced opacity (cannot be selected)
-  - **Input Enforcement**: Added maxLength={80} to title Input fields to prevent editing beyond eBay's 80-character limit
-  - **Publish Validation**: Mutation validates title length and shows immediate error toast + detailed modal on failure
-  - **Implementation**: handleFulfillmentPolicyChange() and handleShippingModeChange() handlers wired to UI, loop-free sync via equality checks
-  - **Testing**: Architect-approved, all validation flows confirmed working (prevention → UI blocking → publish blocking → user feedback)
-- **eBay Sync Service Foundation** (Nov 12 - PAUSED): Major architectural shift to make eBay source of truth
-  - **Status**: Architect-approved sync service complete, paused pending product direction confirmation
-  - **Completed**: `server/lib/ebaySync.ts` with comprehensive drift detection, unit conversion, pagination
-  - **Schema Updates**: Added drift tracking fields to listings/orders tables (migration applied)
-  - **Remaining**: Backend API endpoints, frontend UI, Orders page, API trace logging, testing
-  - **Files**: server/lib/ebaySync.ts, shared/schema.ts (new fields: lastSyncedAt, driftSnapshot, ebayOfferJson, ebayStatus, ebaySku, returnPolicyId, paymentPolicyId)
-- **Listing Management System** (Nov 12): Comprehensive listing editing and management capabilities
-  - **Listings Page** (/listings): Grid view of all published eBay listings with photos, pricing, status badges, and action buttons
-  - **Edit Functionality**: Full editing support for title, description, price, category, fulfillment policy, dimensions, weight, and quantity
-  - **Quantity Persistence**: Added `quantity` column to `inventory_items` table with intelligent fallback logic
-    - When quantity is provided: updates eBay inventory + offer + local DB
-    - When quantity is omitted: preserves existing value (prevents accidental reset to 1)
-    - Implementation: `targetQuantity = validatedData.quantity ?? currentQuantity` pattern
-  - **Update Flow**: eBay-first updates (inventory item → offer) followed by DB persistence only on success (prevents data drift)
-  - **Validation**: Zod safeParse runs BEFORE try/catch, returns 400 for validation errors vs 500 for server errors
-  - **End/Delete Listing**: Withdraw eBay offers and update local state with confirmation dialog
-  - **API Endpoints**: GET /api/listings (with quantity), PUT /api/listings/:id/edit, POST /api/listings/:id/end
-  - **Testing**: E2E test confirms quantity persistence and fallback logic work correctly
-- **eBay Fulfillment Policy Integration** (Nov 11): Added complete fulfillment policy selection workflow
-  - **API Endpoint**: GET /api/ebay/fulfillment-policies with 15-minute caching to fetch user's eBay fulfillment policies
-  - **Draft Page UI**: Added Fulfillment Policy card with Select dropdown, auto-selection for single policy, and visual confirmation
-  - **State Management**: Auto-loads stored policy when editing existing listings, resets on item change, preserves manual selections
-  - **Validation**: Publish endpoint blocks submission if no fulfillment policy selected (frontend and backend validation)
-  - **eBay API Integration**: createOffer payload includes fulfillmentPolicyId in listingPolicies section (required by eBay)
-  - **Database**: Added fulfillmentPolicyId column to listings table for persistence
-  - **Error Handling**: UI displays loading states, API errors, and empty states with actionable messages
-- **Image Hosting for eBay Listings** (Nov 11): Fixed eBay image rejection errors by implementing proper HTTPS hosting
-  - **Root Cause**: eBay Inventory API rejects data URLs (base64-encoded images); requires publicly accessible HTTPS URLs
-  - **Solution**: Implemented filesystem-based image hosting with Express static serving
-  - **Image Uploader Service**: Created abstraction layer (`server/lib/imageUploader.ts`) for future migration to eBay Picture Services or CDN
-  - **URL Validation**: Pre-publish checks ensure all image URLs are non-empty and start with http:// or https://
-  - **Storage**: Images saved to `uploads/` directory (gitignored) with SHA-256 hash-based filenames for deduplication
-  - **Public URLs**: Images served via `/uploads/{hash}.jpg` route accessible at `https://{domain}/uploads/{hash}.jpg`
-  - **Future**: Migration path planned to eBay Picture Services for production resilience
-- **eBay Category Search Authentication Fix** (Nov 11): Fixed 403 Forbidden errors in category search
-  - **Root Cause**: Taxonomy API requires client credentials token (basic oauth scope), not user refresh token (sell.* scopes)
-  - **Solution**: Created `getPublicAccessToken()` function with separate token cache for public APIs
-  - **Leaf Validation**: Category search endpoint now validates and returns only leaf categories (valid for listing creation)
-  - **Performance**: Added request-level memoization to avoid duplicate `isLeafCategory()` API calls
-  - **Result**: Category search now works correctly with debounced input, loading states, and proper error handling
-- **eBay-Compliant Listing Creation** (Nov 11): Complete overhaul of draft listing creation workflow
-  - **Structured Descriptions**: AI now generates intro paragraph + bullet points + closing paragraph format (eBay compliance)
-  - **Title Truncation**: Automatic 80-character limit with word-boundary truncation to prevent eBay errors
-  - **Category Selection**: Added search interface for eBay categories with async dropdown results
-  - **Title Length Indicators**: Real-time character count (0-70: normal, 71-79: warning, 80+: error) with truncation badges
-  - **Editable Structured Editor**: Users can edit intro/bullets/closing independently with add/remove bullet controls
-  - **Regeneration Fix**: Clicking regenerate now refreshes both titles AND description with new AI suggestions
-  - **Pre-flight Validation**: Validates title length, photo count (min 2), category selection, numeric fields before eBay API calls
-  - **Field-level Error Parsing**: Surfaces specific eBay validation errors inline instead of generic failures
-- **AI Title Generation**: Updated prompt to avoid generic marketing words ("superior", "innovative", "reliable") and generate more creative, varied eBay listing titles
-- **Draft Pricing Fix**: Fixed total price calculation - users can now type freely in the Total Price field without input interference
-- **Cancellation Tracking System**: Implemented comprehensive tracking for cancelled Amazon Vine orders
-  - Added `cancelled` status to vine_item_status enum with cancelledAt timestamp and cancelledImportId tracking
-  - Added `orderNumber` field to vine_items for precise order matching (prevents duplicate entries)
-  - Updated import logic to match cancellations by order number instead of ASIN+date (eliminates duplicate items in inventory)
-  - Fixed XLSX column mapping bug (Amazon title row offset)
-  - Cancelled items excluded from active inventory total but tracked separately for tax reconciliation
-  - Stats endpoint returns `cancelled` count for CPA-ready tax reports (reduces taxable income by cancelled ETVs)
-- **Data Model Cleanup**: Removed "sold" and "reserved" from vine_item_status enum - these are now tracked via Listings (draft/live/ended) and Orders tables respectively
-- **1:1 Inventory Constraint**: Enforced one-to-one relationship between Vine Items and Inventory Items (cleaned up 99 duplicate records, added unique constraint)
-- **Production OAuth**: Implemented refresh token support for eBay API with proper scope handling and automatic token renewal (18-month refresh token lifecycle)
-
-## GitHub Repository
-- **Repository**: https://github.com/mynios-labs/vineledgerpro-ezwop
-- **Note**: Replit's git system prevents direct git operations via command line. To push code changes:
-  1. Use Replit's built-in Git interface in the left sidebar (Version Control tab)
-  2. Or manually use the Shell tool and perform git operations when locks are released
-  3. GIT_TOKEN secret is configured for authentication
-
 ## User Preferences
 Preferred communication style: Simple, everyday language.
 
@@ -107,34 +29,36 @@ The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives
 -   **Framework:** Express.js
 -   **Database ORM:** Drizzle ORM with PostgreSQL
 -   **API Design:** RESTful
--   **Background Jobs:** Planned for eBay webhooks and scheduled tasks.
 -   **File Uploads:** Multer
 -   **Image Processing:** Sharp
 
 #### Data Model
 Core entities include Vine Item Management, Inventory & Listings, Order Fulfillment, Financial Tracking (double-entry ledger with detailed event types), Amazon and eBay 1099 Tracking, Configuration, and Monitoring. Key design decisions include SHA-256 hashing for deduplication, separate inventory tracking, event-based accounting, and tracking defective items for tax benefits.
 
-#### Authentication
-Currently uses simple in-memory storage for single-user mode, with future plans for email magic link or local password authentication.
-
 ### Privacy & Compliance
 Features include a forbidden word list, cosine similarity checks to prevent Amazon TOS violations, EXIF data scrubbing, and dual address profiles for returns and shipping. Listings undergo a validation flow before publication.
 
-### Development & Build
-Uses Vite for frontend development with HMR and esbuild for backend bundling. Type safety is maintained with shared TypeScript types and strict TSConfig.
+### System Design Choices
+-   **eBay Orders Sync System:** Implements complete eBay orders synchronization with drift detection, a 2-step shipping workflow, and background sync every 15 minutes. It handles 429 retries with exponential backoff and tracks shipping statuses.
+-   **Listing Management System:** Provides comprehensive editing for published eBay listings including title, description, price, category, fulfillment policy, dimensions, weight, and quantity. It ensures quantity persistence and eBay-first updates to prevent data drift.
+-   **eBay Fulfillment Policy Integration:** Fetches and manages eBay fulfillment policies with UI selection and validation during listing creation.
+-   **Image Hosting:** Implemented a filesystem-based image hosting solution with Express static serving for publicly accessible HTTPS URLs, resolving eBay image rejection issues.
+-   **eBay Category Search:** Fixed authentication for the Taxonomy API, ensuring only leaf categories are returned and implementing request-level memoization for performance.
+-   **eBay-Compliant Listing Creation:** Overhauled draft listing creation with AI-generated structured descriptions, 80-character title truncation with real-time indicators, a category search interface, and pre-flight validation.
+-   **Cancellation Tracking System:** Implemented comprehensive tracking for cancelled Amazon Vine orders, including a `cancelled` status, `orderNumber` for precise matching, and exclusion from active inventory totals for tax reconciliation.
+-   **Inventory Constraint:** Enforced a one-to-one relationship between Vine Items and Inventory Items.
+-   **Production OAuth:** Implemented refresh token support for eBay API with automatic token renewal.
 
 ## External Dependencies
 
 ### eBay APIs
 -   **Used for:** Taxonomy, Inventory, Offer, Fulfillment, Post Order, Messaging, Picture Services.
 -   **Authentication:** Requires Client Credentials Flow (public APIs) and User Access Token (inventory/listing operations).
--   **Specifics:** All listings are "Buy It Now." Requires merchant location and business policies configured in eBay Seller Hub.
 
 ### Shipping Services
 -   **Primary:** Shippo API
 -   **Carrier:** UPS (exclusively)
 -   **Functionality:** Rate calculation, label purchase, tracking number generation.
--   **Pricing:** UPS Ground rate + 5% cushion for estimates.
 
 ### AI Services
 -   **Provider:** OpenAI-compatible API via Replit AI Integrations.
