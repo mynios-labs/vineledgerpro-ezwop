@@ -1336,10 +1336,12 @@ Output only JSON:
       // Get or create merchant location
       const merchantLocationKey = await getOrCreateMerchantLocation();
 
-      // Validate business policies before creating/updating offer
-      const { getFulfillmentPolicies } = await import("./lib/ebay");
-      const policiesData = await getFulfillmentPolicies("EBAY_US");
-      const validFulfillmentPolicy = policiesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
+      // Fetch and validate all 3 required business policies
+      const { getFulfillmentPolicies, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
+      
+      // Validate fulfillment policy (user-selected)
+      const fulfillmentPoliciesData = await getFulfillmentPolicies("EBAY_US");
+      const validFulfillmentPolicy = fulfillmentPoliciesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
       
       if (!validFulfillmentPolicy) {
         throw new Error(
@@ -1349,6 +1351,42 @@ Output only JSON:
       }
       
       console.log(`[Publish] Using fulfillment policy: ${validFulfillmentPolicy.name} (${fulfillmentPolicyId})`);
+      
+      // Auto-select payment policy (prefer default, fallback to first)
+      const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+      const selectedPaymentPolicy = selectBestPolicy(
+        paymentPoliciesData.paymentPolicies || [],
+        "EBAY_US",
+        "paymentPolicyId"
+      );
+      
+      if (!selectedPaymentPolicy) {
+        throw new Error(
+          "No payment policies found for EBAY_US. " +
+          "Please configure at least one payment policy in eBay Seller Hub > Business Policies."
+        );
+      }
+      
+      const paymentPolicyId = selectedPaymentPolicy.paymentPolicyId;
+      console.log(`[Publish] Auto-selected payment policy: ${selectedPaymentPolicy.name} (${paymentPolicyId})`);
+      
+      // Auto-select return policy (prefer default, fallback to first)
+      const returnPoliciesData = await getReturnPolicies("EBAY_US");
+      const selectedReturnPolicy = selectBestPolicy(
+        returnPoliciesData.returnPolicies || [],
+        "EBAY_US",
+        "returnPolicyId"
+      );
+      
+      if (!selectedReturnPolicy) {
+        throw new Error(
+          "No return policies found for EBAY_US. " +
+          "Please configure at least one return policy in eBay Seller Hub > Business Policies."
+        );
+      }
+      
+      const returnPolicyId = selectedReturnPolicy.returnPolicyId;
+      console.log(`[Publish] Auto-selected return policy: ${selectedReturnPolicy.name} (${returnPolicyId})`);
 
       // IDEMPOTENT FLOW: Detect existing offers
       const offersData = await getOffersBySku(sku, "EBAY_US", tracer);
@@ -1396,6 +1434,8 @@ Output only JSON:
               format: "FIXED_PRICE",
               merchantLocationKey,
               listingPolicies: {
+                paymentPolicyId,
+                returnPolicyId,
                 fulfillmentPolicyId,
               },
               pricingSummary: {
@@ -1417,6 +1457,8 @@ Output only JSON:
               format: "FIXED_PRICE",
               merchantLocationKey,
               listingPolicies: {
+                paymentPolicyId,
+                returnPolicyId,
                 fulfillmentPolicyId,
               },
               pricingSummary: {
@@ -1449,6 +1491,8 @@ Output only JSON:
           format: "FIXED_PRICE",
           merchantLocationKey,
           listingPolicies: {
+            paymentPolicyId,
+            returnPolicyId,
             fulfillmentPolicyId,
           },
           pricingSummary: {

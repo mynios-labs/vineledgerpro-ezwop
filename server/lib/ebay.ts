@@ -440,6 +440,92 @@ export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"):
   return data;
 }
 
+export async function getPaymentPolicies(marketplaceId: string = "EBAY_US"): Promise<any> {
+  console.log("[eBay] Fetching payment policies from Account API (no cache)");
+  const token = await getAccessToken();
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
+        "Accept": "application/json",
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[eBay] Get payment policies failed:`, response.status, errorText);
+    throw new Error(`eBay get payment policies failed: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  console.log(`[eBay] Retrieved ${data.paymentPolicies?.length || 0} payment policies for ${marketplaceId}`);
+  return data;
+}
+
+export async function getReturnPolicies(marketplaceId: string = "EBAY_US"): Promise<any> {
+  console.log("[eBay] Fetching return policies from Account API (no cache)");
+  const token = await getAccessToken();
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
+        "Accept": "application/json",
+        "Content-Language": "en-US",
+        "Accept-Language": "en-US",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[eBay] Get return policies failed:`, response.status, errorText);
+    throw new Error(`[eBay get return policies failed: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  console.log(`[eBay] Retrieved ${data.returnPolicies?.length || 0} return policies for ${marketplaceId}`);
+  return data;
+}
+
+// Helper to select the best policy from a list (prefer default for marketplace, fallback to first)
+export function selectBestPolicy(policies: any[], marketplaceId: string, policyIdField: string): any {
+  if (!policies || policies.length === 0) {
+    return null;
+  }
+
+  // Filter to marketplace first
+  const marketplacePolicies = policies.filter(p => p.marketplaceId === marketplaceId);
+  if (marketplacePolicies.length === 0) {
+    return null;
+  }
+
+  // Prefer default policy for this marketplace
+  const defaultPolicy = marketplacePolicies.find(p => 
+    p.categoryTypes?.some((ct: any) => ct.default === true)
+  );
+  
+  if (defaultPolicy) {
+    console.log(`[eBay] Selected default policy: ${defaultPolicy.name} (${defaultPolicy[policyIdField]})`);
+    return defaultPolicy;
+  }
+
+  // Fallback to first active policy
+  const firstPolicy = marketplacePolicies[0];
+  console.log(`[eBay] Selected first available policy: ${firstPolicy.name} (${firstPolicy[policyIdField]})`);
+  return firstPolicy;
+}
+
 // Traced eBay API functions for idempotent publish flow
 
 export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_US", tracer?: ApiTracer): Promise<any> {
