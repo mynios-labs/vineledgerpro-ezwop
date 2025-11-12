@@ -549,6 +549,10 @@ export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_
       requestInit,
       () => fetch(url, requestInit),
       (data, response) => {
+        // 404 is normal when no offers exist yet
+        if (response.status === 404) {
+          return null;
+        }
         if (!response.ok) {
           return `Get offers failed: ${response.status} - ${JSON.stringify(data)}`;
         }
@@ -559,6 +563,12 @@ export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_
       }
     );
     
+    // 404 means no offers exist - return empty offers array
+    if (response.status === 404) {
+      console.log(`[eBay] No existing offers found for SKU ${sku} (404 - this is normal)`);
+      return { offers: [] };
+    }
+    
     if (!response.ok || data.errors) {
       throw new Error(`Get offers failed: ${response.status} - ${JSON.stringify(data)}`);
     }
@@ -566,6 +576,13 @@ export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_
     return data;
   } else {
     const response = await fetch(url, requestInit);
+    
+    // 404 means no offers exist - return empty offers array (normal case)
+    if (response.status === 404) {
+      console.log(`[eBay] No existing offers found for SKU ${sku} (404 - this is normal)`);
+      return { offers: [] };
+    }
+    
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(`Get offers failed: ${response.status} - ${JSON.stringify(errorData)}`);
