@@ -1,4 +1,6 @@
 // eBay API client utilities
+import { ApiTracer } from './apiTracer';
+
 const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
   ? "https://api.ebay.com"
   : "https://api.sandbox.ebay.com";
@@ -441,4 +443,330 @@ export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"):
 
   console.log(`[eBay] Cached ${data.fulfillmentPolicies?.length || 0} fulfillment policies`);
   return data;
+}
+
+// Traced eBay API functions for idempotent publish flow
+
+export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_US", tracer?: ApiTracer): Promise<any> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`;
+  
+  const requestInit: RequestInit = {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Accept-Language": "en-US",
+    },
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Get existing offers",
+      "GET",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Get offers failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Get offers failed: ${JSON.stringify(data.errors)}`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Get offers failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    
+    return data;
+  } else {
+    const response = await fetch(url, requestInit);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Get offers failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+    return response.json();
+  }
+}
+
+export async function getOffer(offerId: string, tracer?: ApiTracer): Promise<any> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer/${offerId}`;
+  
+  const requestInit: RequestInit = {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Accept-Language": "en-US",
+    },
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Verify offer",
+      "GET",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Get offer failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Get offer failed: ${JSON.stringify(data.errors)}`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Get offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    
+    return data;
+  } else {
+    const response = await fetch(url, requestInit);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Get offer failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+    return response.json();
+  }
+}
+
+export async function updateOffer(offerId: string, offer: any, tracer?: ApiTracer): Promise<any> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer/${offerId}`;
+  
+  const requestInit: RequestInit = {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US",
+    },
+    body: JSON.stringify(offer),
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Update offer",
+      "PUT",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Update offer failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Update offer failed: ${JSON.stringify(data.errors)}`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Update offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    
+    return data;
+  } else {
+    const response = await fetch(url, requestInit);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.errors) {
+      throw new Error(`Update offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    return data;
+  }
+}
+
+export async function withdrawOffer(offerId: string, tracer?: ApiTracer): Promise<void> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer/${offerId}/withdraw`;
+  
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US",
+    },
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Withdraw offer",
+      "POST",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Withdraw offer failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Withdraw offer failed: ${JSON.stringify(data.errors)}`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Withdraw offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+  } else {
+    const response = await fetch(url, requestInit);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Withdraw offer failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+  }
+}
+
+export async function createOfferTraced(offer: any, tracer?: ApiTracer): Promise<any> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer`;
+  
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US",
+    },
+    body: JSON.stringify(offer),
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Create offer",
+      "POST",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Create offer failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Create offer failed: ${JSON.stringify(data.errors)}`;
+        }
+        if (!data.offerId) {
+          return `Create offer failed: No offerId in response`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Create offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    
+    if (!data.offerId) {
+      throw new Error(`Create offer failed: No offerId in response`);
+    }
+    
+    return data;
+  } else {
+    return createOffer(offer);
+  }
+}
+
+export async function publishOfferTraced(offerId: string, tracer?: ApiTracer): Promise<any> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/offer/${offerId}/publish`;
+  
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US",
+    },
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Publish offer",
+      "POST",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Publish offer failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Publish offer failed: ${JSON.stringify(data.errors)}`;
+        }
+        if (!data.listingId) {
+          return `Publish offer failed: No listingId in response`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Publish offer failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+    
+    if (!data.listingId) {
+      throw new Error(`Publish offer failed: No listingId in response`);
+    }
+    
+    return data;
+  } else {
+    return publishOffer(offerId);
+  }
+}
+
+export async function createOrUpdateInventoryItemTraced(sku: string, item: any, tracer?: ApiTracer): Promise<void> {
+  const token = await getAccessToken();
+  const url = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${sku}`;
+  
+  const requestInit: RequestInit = {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "Accept-Language": "en-US",
+    },
+    body: JSON.stringify(item),
+  };
+
+  if (tracer) {
+    const { response, data } = await tracer.trace<any>(
+      "Create/update inventory item",
+      "PUT",
+      url,
+      requestInit,
+      () => fetch(url, requestInit),
+      (data, response) => {
+        if (!response.ok) {
+          return `Create inventory item failed: ${response.status} - ${JSON.stringify(data)}`;
+        }
+        if (data.errors) {
+          return `Create inventory item failed: ${JSON.stringify(data.errors)}`;
+        }
+        return null;
+      }
+    );
+    
+    if (!response.ok || data.errors) {
+      throw new Error(`Create inventory item failed: ${response.status} - ${JSON.stringify(data)}`);
+    }
+  } else {
+    await createOrUpdateInventoryItem(sku, item);
+  }
 }

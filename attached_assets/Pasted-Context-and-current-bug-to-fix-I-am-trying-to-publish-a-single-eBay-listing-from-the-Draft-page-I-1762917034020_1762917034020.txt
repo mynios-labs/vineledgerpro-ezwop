@@ -1,0 +1,93 @@
+Context and current bug to fix
+
+I am trying to publish a single eBay listing from the Draft page.
+
+Images, category, and business policies are now configured and validated.
+
+Publish is failing with this eBay response in the red toast:
+
+400: {"error":"eBay validation failed","ebayErrors":[{"domain":"offerApi","errorId":...,"message":"An user error has occurred.","longMessage":"Offer already exists."}]}
+
+
+Seller Hub shows no live listings. That means we likely created or tried to create an offer for the SKU earlier, then the UI tried to create another one. eBay blocks duplicates per SKU, so subsequent calls to create an offer fail with Offer already exists.
+
+The product is not live because we never successfully published the preexisting offer or we published and did not record the itemId.
+
+Goal
+
+Make publishing idempotent for a single SKU and show the user a submission modal with a full API trace. After clicking publish the user should either see a success state with a link to the live eBay listing or a failure state that shows every request and response we made to eBay so they can fix quickly.
+
+Fix the publish logic
+
+Detect existing offers for the SKU before creating a new one.
+
+Use eBay Inventory API to list offers for the given sku.
+
+If one or more offers exist, choose the offer for marketplaceId = EBAY_US.
+
+Do not call create-offer again if any offer exists for the SKU.
+
+Handle offer status paths idempotently.
+
+If the selected offer is PUBLISHED, verify and return the itemId. If fields changed that are revisable, call revise. If the change is not revisable, withdraw, update, then publish.
+
+If the offer is UNPUBLISHED, update the fields, then call publishOffer.
+
+Persist and return offerId, and on success also itemId and the view link https://www.ebay.com/itm/{itemId}.
+
+Never create multiple offers for the same SKU. All subsequent publishes for that SKU should reference and update the existing offer.
+
+Verify live status after publish.
+
+After a successful publishOffer, fetch the offer again or use the Listings API to confirm itemId exists.
+
+Return itemId to the client so we can link to the live page.
+
+Record business policies and marketplace.
+
+Always send the user selected fulfillmentPolicyId, paymentPolicyId, returnPolicyId, and marketplaceId = EBAY_US.
+
+Validate quantity is at least 1. Validate category id and image URLs are present.
+
+UI. Post-submit modal with complete API trace
+
+On “Approve and Publish to eBay” open a modal that:
+
+While running: shows a spinner and step labels: Detect existing offer, Create or Update offer, Publish offer, Verify listing. Buttons disabled.
+
+Success: big green check. Show itemId, offerId, price, category, quantity. Provide “View on eBay” button using https://www.ebay.com/itm/{itemId} and a Close button. Provide small Copy buttons for itemId and offerId.
+
+Failure: show a red header “Publish failed”. Provide three tabs:
+
+Summary: human readable message and the step that failed, plus what to fix.
+
+eBay API Trace: list each eBay call we made in order with timestamp, method, endpoint, status, and correlation id if present.
+
+Raw JSON: pretty printed request and response bodies for each step. Redact tokens and cookies.
+Buttons: “Retry publish” and “Close”. Keep the modal and append each new attempt to the trace so the user sees multiple tries.
+
+Server side tracing for a single attempt
+
+Wrap each eBay call in a tracer that captures: step, method, url, requestBody, responseStatus, responseBody, non-sensitive headers, timestamp.
+
+Redact secrets before returning to the client.
+
+Return the trace in the publish API response so the modal can render it.
+
+Acceptance tests
+
+New SKU. Publish. Expect Create -> Publish -> Verify, success modal with live link.
+
+Same SKU, no changes. Publish. Expect Detect existing offer -> Verify. No duplicate offer created.
+
+Change price or category. Publish. Expect Update -> Revise or Withdraw+Publish -> Verify.
+
+Force a validation error. Publish. Expect failure modal with field error in Summary and the raw response visible in Raw JSON.
+
+Guardrails
+
+Never log or return tokens or cookies.
+
+Do not create a second offer if one exists for the SKU.
+
+Always prefer revise when allowed. Withdraw+republish only when required by eBay.

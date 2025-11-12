@@ -1175,8 +1175,22 @@ Output only JSON:
     }
   });
 
-  // Publish listing
+  // Publish listing (idempotent with API tracing)
   app.post("/api/listings/publish", upload.array("photos", 12), async (req, res) => {
+    const { ApiTracer } = await import("./lib/apiTracer");
+    const { compareOffers, verifyOfferPublished } = await import("./lib/ebayOfferHelpers");
+    const {
+      getOffersBySku,
+      getOffer,
+      createOfferTraced,
+      publishOfferTraced,
+      updateOffer,
+      withdrawOffer,
+      createOrUpdateInventoryItemTraced,
+    } = await import("./lib/ebay");
+
+    const tracer = new ApiTracer();
+
     try {
       const {
         vineItemId,
@@ -1209,6 +1223,7 @@ Output only JSON:
         return res.status(400).json({ 
           error: "Validation failed",
           details: validationErrors,
+          trace: tracer.getTrace(),
           fieldErrors: {
             title: validationErrors.find(e => e.includes("Title")),
             description: validationErrors.find(e => e.includes("Description")),
@@ -1238,6 +1253,7 @@ Output only JSON:
         return res.status(400).json({
           error: "Validation failed",
           details: ["One or more photo URLs are invalid. Photos must be publicly accessible."],
+          trace: tracer.getTrace(),
           fieldErrors: {
             photos: "One or more photos failed to upload. Please try again.",
           }
@@ -1280,9 +1296,9 @@ Output only JSON:
         })
         .returning();
 
-      // Create eBay listing
+      // Create/update eBay inventory item
       const sku = `ITEM-${inventoryItem.inventoryId}`;
-      await createOrUpdateInventoryItem(sku, {
+      await createOrUpdateInventoryItemTraced(sku, {
         product: {
           title,
           description,
@@ -1295,32 +1311,131 @@ Output only JSON:
             quantity: 1,
           },
         },
-      });
+      }, tracer);
 
       // Get or create merchant location
       const merchantLocationKey = await getOrCreateMerchantLocation();
 
-      // Create offer with fulfillment policy
-      const offer = await createOffer({
-        sku,
-        marketplaceId: "EBAY_US",
-        format: "FIXED_PRICE",
-        merchantLocationKey,
-        listingPolicies: {
+      // IDEMPOTENT FLOW: Detect existing offers
+      const offersData = await getOffersBySku(sku, "EBAY_US", tracer);
+      const existingOffers = offersData.offers || [];
+      const existingOffer = existingOffers.find((o: any) => o.marketplaceId === "EBAY_US");
+
+      let offerId: string;
+      let itemId: string | null = null;
+
+      if (existingOffer) {
+        console.log(`[Publish] Found existing offer ${existingOffer.offerId} with status ${existingOffer.status}`);
+        offerId = existingOffer.offerId;
+
+        // Compare existing offer with new data
+        const comparison = compareOffers(existingOffer, {
+          priceCents: parseInt(priceCents),
+          categoryId,
+          title,
+          description,
           fulfillmentPolicyId,
-        },
-        pricingSummary: {
-          price: {
-            value: (parseInt(priceCents) / 100).toFixed(2),
-            currency: "USD",
+          imageUrls: photoUrls,
+        });
+
+        if (comparison.hasChanges) {
+          console.log(`[Publish] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
+
+          if (comparison.nonRevisableChanges.length > 0) {
+            // Non-revisable changes: withdraw → update → republish
+            if (existingOffer.status === "PUBLISHED") {
+              await withdrawOffer(offerId, tracer);
+            }
+            
+            // Update offer
+            await updateOffer(offerId, {
+              sku,
+              marketplaceId: "EBAY_US",
+              format: "FIXED_PRICE",
+              merchantLocationKey,
+              listingPolicies: {
+                fulfillmentPolicyId,
+              },
+              pricingSummary: {
+                price: {
+                  value: (parseInt(priceCents) / 100).toFixed(2),
+                  currency: "USD",
+                },
+              },
+              categoryId,
+            }, tracer);
+
+            // Republish
+            await publishOfferTraced(offerId, tracer);
+          } else if (comparison.revisableChanges.length > 0) {
+            // Only revisable changes: update in-place (revise)
+            await updateOffer(offerId, {
+              sku,
+              marketplaceId: "EBAY_US",
+              format: "FIXED_PRICE",
+              merchantLocationKey,
+              listingPolicies: {
+                fulfillmentPolicyId,
+              },
+              pricingSummary: {
+                price: {
+                  value: (parseInt(priceCents) / 100).toFixed(2),
+                  currency: "USD",
+                },
+              },
+              categoryId,
+            }, tracer);
+
+            // If not published, publish now
+            if (existingOffer.status !== "PUBLISHED") {
+              await publishOfferTraced(offerId, tracer);
+            }
+          }
+        } else if (existingOffer.status !== "PUBLISHED") {
+          // No changes but not published - publish it
+          console.log(`[Publish] No changes detected, publishing unpublished offer`);
+          await publishOfferTraced(offerId, tracer);
+        } else {
+          console.log(`[Publish] No changes detected, offer already published`);
+        }
+      } else {
+        // No existing offer - create new one
+        console.log(`[Publish] No existing offer found, creating new offer`);
+        const offerData = await createOfferTraced({
+          sku,
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          merchantLocationKey,
+          listingPolicies: {
+            fulfillmentPolicyId,
           },
-        },
-        categoryId,
-      });
+          pricingSummary: {
+            price: {
+              value: (parseInt(priceCents) / 100).toFixed(2),
+              currency: "USD",
+            },
+          },
+          categoryId,
+        }, tracer);
 
-      const published = await publishOffer(offer.offerId);
+        offerId = offerData.offerId;
+        await publishOfferTraced(offerId, tracer);
+      }
 
-      // Check if listing already exists for this inventory item
+      // Verify offer published and get itemId
+      const verified = await verifyOfferPublished(
+        (id: string) => getOffer(id, tracer),
+        offerId,
+        3,
+        2000
+      );
+      itemId = verified.itemId;
+
+      if (!itemId) {
+        throw new Error(`Offer ${offerId} published but itemId not available after verification. Status: ${verified.status}`);
+      }
+
+      // Upsert listing record with offerId and itemId
       const existingListing = await db
         .select()
         .from(listings)
@@ -1329,11 +1444,11 @@ Output only JSON:
 
       let listing;
       if (existingListing.length > 0) {
-        // Update existing listing
         const [updated] = await db
           .update(listings)
           .set({
-            ebayItemId: published.listingId,
+            ebayOfferId: offerId,
+            ebayItemId: itemId,
             categoryId,
             title,
             description,
@@ -1346,12 +1461,12 @@ Output only JSON:
           .returning();
         listing = updated;
       } else {
-        // Create new listing record
         const [created] = await db
           .insert(listings)
           .values({
             inventoryId: inventoryItem.inventoryId,
-            ebayItemId: published.listingId,
+            ebayOfferId: offerId,
+            ebayItemId: itemId,
             categoryId,
             title,
             description,
@@ -1364,25 +1479,43 @@ Output only JSON:
         listing = created;
       }
 
-      // Note: vine_items.status is NOT updated to "reserved" anymore
-      // Listing existence now tracks reservation status
-
-      // Create accounting entry for basis
-      const [vineItem] = await db
+      // Create accounting entry for basis (only if first time)
+      const existingLedgerEntries = await db
         .select()
-        .from(vineItems)
-        .where(eq(vineItems.vineItemId, vineItemId));
+        .from(accountingLedger)
+        .where(
+          and(
+            eq(accountingLedger.inventoryId, inventoryItem.inventoryId),
+            eq(accountingLedger.eventType, "basis_add")
+          )
+        )
+        .limit(1);
 
-      await db.insert(accountingLedger).values({
-        inventoryId: inventoryItem.inventoryId,
-        eventType: "basis_add",
-        amountCents: vineItem.etvCents,
-        direction: "debit",
-        txDate: vineItem.receivedDate,
-        note: "Initial basis from ETV",
+      if (existingLedgerEntries.length === 0) {
+        const [vineItem] = await db
+          .select()
+          .from(vineItems)
+          .where(eq(vineItems.vineItemId, vineItemId));
+
+        await db.insert(accountingLedger).values({
+          inventoryId: inventoryItem.inventoryId,
+          eventType: "basis_add",
+          amountCents: vineItem.etvCents,
+          direction: "debit",
+          txDate: vineItem.receivedDate,
+          note: "Initial basis from ETV",
+        });
+      }
+
+      // Return success with trace
+      res.json({ 
+        success: true,
+        listing,
+        offerId,
+        itemId,
+        viewUrl: `https://www.ebay.com/itm/${itemId}`,
+        trace: tracer.getTrace(),
       });
-
-      res.json({ listing, ebayListingId: published.listingId });
     } catch (error: any) {
       console.error("[Publish] Error:", error.message);
       
@@ -1402,11 +1535,14 @@ Output only JSON:
 
       const hasFieldErrors = Object.keys(ebayErrors).length > 0;
       res.status(400).json({ 
+        success: false,
         error: hasFieldErrors ? "eBay validation failed" : error.message,
         ebayErrors: hasFieldErrors ? ebayErrors : undefined,
         details: hasFieldErrors ? 
           Object.entries(ebayErrors).map(([field, msg]) => `${field}: ${msg}`) :
-          [error.message]
+          [error.message],
+        trace: tracer.getTrace(),
+        failedStep: tracer.getFailedStep(),
       });
     }
   });

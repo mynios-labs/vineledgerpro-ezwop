@@ -82,6 +82,7 @@ export const inventoryItems = pgTable("inventory_items", {
 export const listings = pgTable("listings", {
   listingId: varchar("listing_id").primaryKey().default(sql`gen_random_uuid()`),
   inventoryId: varchar("inventory_id").notNull().references(() => inventoryItems.inventoryId, { onDelete: "cascade" }),
+  ebayOfferId: text("ebay_offer_id"),
   ebayItemId: text("ebay_item_id"),
   categoryId: text("category_id"),
   title: text("title").notNull(),
