@@ -34,6 +34,43 @@ function serializeDescription(desc: StructuredDescription): string {
   return `${desc.intro}\n\n${bulletList}\n\n${desc.closing}`;
 }
 
+// Helper: Check if title exceeds eBay's 80-character limit
+function isTitleOverLimit(title: string): boolean {
+  return title.length > 80;
+}
+
+// Helper: Infer shipping mode from fulfillment policy name
+function inferShippingModeFromPolicy(policyName: string | null): "separate" | "included" {
+  if (!policyName) return "separate";
+  const lowerName = policyName.toLowerCase();
+  if (lowerName.includes("free") && lowerName.includes("shipping")) {
+    return "included";
+  }
+  if (lowerName.includes("buyer") && lowerName.includes("pay")) {
+    return "separate";
+  }
+  return "separate"; // Default
+}
+
+// Helper: Find matching policy for shipping mode
+function findPolicyForShippingMode(
+  policies: Array<{ fulfillmentPolicyId: string; name: string }> | undefined,
+  mode: "separate" | "included"
+): { fulfillmentPolicyId: string; name: string } | null {
+  if (!policies || policies.length === 0) return null;
+  
+  const targetKeywords = mode === "included" 
+    ? ["free", "shipping"]
+    : ["buyer", "pay"];
+  
+  const match = policies.find(p => {
+    const lowerName = p.name.toLowerCase();
+    return targetKeywords.every(kw => lowerName.includes(kw));
+  });
+  
+  return match || null;
+}
+
 export default function DraftPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -136,6 +173,70 @@ export default function DraftPage() {
       }
     }
   }, [selectedFulfillmentPolicyId, fulfillmentPolicies, selectedFulfillmentPolicyName]);
+
+  // Load fulfillment policy and shipping mode from localStorage on page load (with validation)
+  useEffect(() => {
+    if (!vineItemId || !fulfillmentPolicies || fulfillmentPolicies.length === 0) return;
+    
+    const storageKey = `draft_${vineItemId}`;
+    const savedData = localStorage.getItem(storageKey);
+    
+    if (savedData) {
+      try {
+        const { fulfillmentPolicyId, shippingMode: savedShippingMode } = JSON.parse(savedData);
+        
+        // Validate policy is still active BEFORE applying
+        if (fulfillmentPolicyId) {
+          const isValid = fulfillmentPolicies.some(p => p.fulfillmentPolicyId === fulfillmentPolicyId);
+          
+          if (isValid && !selectedFulfillmentPolicyId) {
+            setSelectedFulfillmentPolicyId(fulfillmentPolicyId);
+            // Shipping mode will be synced automatically by the policy→mode effect
+          } else if (!isValid) {
+            toast({
+              title: "Saved fulfillment policy no longer active",
+              description: "The previously selected policy is no longer available. Please choose another one.",
+              variant: "destructive",
+            });
+            localStorage.removeItem(storageKey);
+          }
+        } else if (savedShippingMode && !listing) {
+          // Only restore shipping mode if no policy was saved
+          setShippingMode(savedShippingMode);
+        }
+      } catch (e) {
+        console.error("Failed to load draft from localStorage:", e);
+      }
+    }
+  }, [vineItemId, listing, selectedFulfillmentPolicyId, fulfillmentPolicies, toast]);
+
+  // Sync fulfillment policy → shipping mode (when policy name changes)
+  useEffect(() => {
+    if (!selectedFulfillmentPolicyName) return;
+    
+    const inferredMode = inferShippingModeFromPolicy(selectedFulfillmentPolicyName);
+    
+    // Only update if different to avoid triggering unnecessary re-renders
+    if (inferredMode !== shippingMode) {
+      setShippingMode(inferredMode);
+    }
+  }, [selectedFulfillmentPolicyName, shippingMode]);
+
+  // Save fulfillment policy and shipping mode to localStorage (debounced)
+  useEffect(() => {
+    if (!vineItemId) return;
+    
+    const timeoutId = setTimeout(() => {
+      const storageKey = `draft_${vineItemId}`;
+      const dataToSave = {
+        fulfillmentPolicyId: selectedFulfillmentPolicyId,
+        shippingMode,
+      };
+      localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+    }, 500); // Debounce to avoid excessive writes
+    
+    return () => clearTimeout(timeoutId);
+  }, [vineItemId, selectedFulfillmentPolicyId, shippingMode]);
 
   // Debounce category search (300ms delay)
   useEffect(() => {
@@ -250,6 +351,32 @@ export default function DraftPage() {
     const updated = [...editableTitles];
     updated[index] = newTitle;
     setEditableTitles(updated);
+  };
+
+  // Handler: Update shipping mode and attempt to find matching fulfillment policy
+  const handleShippingModeChange = (newMode: "separate" | "included") => {
+    // Update shipping mode
+    setShippingMode(newMode);
+    
+    // Try to find a matching policy
+    const matchingPolicy = findPolicyForShippingMode(fulfillmentPolicies, newMode);
+    
+    if (matchingPolicy) {
+      // Only update if it's different from current selection
+      if (matchingPolicy.fulfillmentPolicyId !== selectedFulfillmentPolicyId) {
+        setSelectedFulfillmentPolicyId(matchingPolicy.fulfillmentPolicyId);
+        setSelectedFulfillmentPolicyName(matchingPolicy.name);
+      }
+    }
+    // If no matching policy found, keep current selection (user might have only one policy)
+  };
+
+  // Handler: Update fulfillment policy and sync shipping mode
+  const handleFulfillmentPolicyChange = (policyId: string) => {
+    setSelectedFulfillmentPolicyId(policyId);
+    const policy = fulfillmentPolicies?.find(p => p.fulfillmentPolicyId === policyId);
+    setSelectedFulfillmentPolicyName(policy?.name || null);
+    // Shipping mode will be synced automatically by the useEffect
   };
 
   const publishMutation = useMutation({
@@ -491,11 +618,7 @@ export default function DraftPage() {
                       <Label>Selected Policy</Label>
                       <Select
                         value={selectedFulfillmentPolicyId || undefined}
-                        onValueChange={(value) => {
-                          setSelectedFulfillmentPolicyId(value);
-                          const policy = fulfillmentPolicies.find(p => p.fulfillmentPolicyId === value);
-                          setSelectedFulfillmentPolicyName(policy?.name || null);
-                        }}
+                        onValueChange={handleFulfillmentPolicyChange}
                       >
                         <SelectTrigger data-testid="select-fulfillment-policy">
                           <SelectValue placeholder="Choose fulfillment policy..." />
@@ -955,7 +1078,7 @@ export default function DraftPage() {
                       <Label>Shipping Pricing</Label>
                       <div className="grid grid-cols-2 gap-3">
                         <button
-                          onClick={() => setShippingMode("separate")}
+                          onClick={() => handleShippingModeChange("separate")}
                           className={`p-3 rounded-lg border-2 text-left transition-all ${
                             shippingMode === "separate"
                               ? "border-primary bg-accent"
@@ -969,7 +1092,7 @@ export default function DraftPage() {
                           </div>
                         </button>
                         <button
-                          onClick={() => setShippingMode("included")}
+                          onClick={() => handleShippingModeChange("included")}
                           className={`p-3 rounded-lg border-2 text-left transition-all ${
                             shippingMode === "included"
                               ? "border-primary bg-accent"

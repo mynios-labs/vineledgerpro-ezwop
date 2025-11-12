@@ -4,6 +4,12 @@
 This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
 
 ## Recent Updates (November 2025)
+- **eBay Sync Service Foundation** (Nov 12 - IN PROGRESS): Major architectural shift to make eBay source of truth
+  - **Status**: Architect-approved sync service complete, paused pending product direction confirmation
+  - **Completed**: `server/lib/ebaySync.ts` with comprehensive drift detection, unit conversion, pagination
+  - **Schema Updates**: Added drift tracking fields to listings/orders tables (migration applied)
+  - **Remaining**: Backend API endpoints, frontend UI, Orders page, API trace logging, testing
+  - **Files**: server/lib/ebaySync.ts, shared/schema.ts (new fields: lastSyncedAt, driftSnapshot, ebayOfferJson, ebayStatus, ebaySku, returnPolicyId, paymentPolicyId)
 - **Listing Management System** (Nov 12): Comprehensive listing editing and management capabilities
   - **Listings Page** (/listings): Grid view of all published eBay listings with photos, pricing, status badges, and action buttons
   - **Edit Functionality**: Full editing support for title, description, price, category, fulfillment policy, dimensions, weight, and quantity

@@ -1,0 +1,105 @@
+Draft Listing fixes. Problems to solve
+
+Title options list has UI glitches and the “Original Amazon Title” exceeds eBay’s 80-char limit yet remains selectable.
+
+The page always defaults to “Free Domestic Shipping.” My account now has two live fulfillment policies on eBay: “Free Domestic Shipping” and “Buyer Pays.” The UI must fetch and show the real policies and use their IDs.
+
+Pricing & Shipping is not synced with the selected fulfillment policy. When “Free Domestic Shipping” is chosen, “Include in price” must be on. When “Buyer Pays” is chosen, “Charge separately” must be on. Changing either control must reflect in the other.
+
+The results modal that shows API requests expands beyond the viewport. It must have a fixed size and scroll.
+
+What to build or change
+
+A) Title options
+
+Detect if a title is over 80 characters. Mark it as “Reference only” and make it non-selectable with a greyed option. Keep it visible for context.
+
+Fix the visual glitches in the list selection UI so the currently selected title is clearly highlighted and only valid options are selectable.
+
+B) Fulfillment policy source of truth is eBay
+
+Do not hardcode policy names or IDs. On page load and when opening the dropdown, call the eBay Sell Account API for EBAY_US and fetch active fulfillment policies.
+
+Show the policy names in the dropdown. Persist and publish with the fulfillmentPolicyId.
+
+If a saved fulfillmentPolicyId on the draft is missing or inactive, show an inline error, refresh from eBay, and require a valid choice.
+
+Block publish if the policyId is missing or invalid. Show the eBay error in the results modal.
+
+C) Sync rules between Fulfillment Policy and Pricing & Shipping
+
+If the selected policy name equals or contains “Free Domestic Shipping,” then:
+
+Auto-select “Include in price” in Pricing & Shipping.
+
+Keep them in sync if the user toggles either control.
+
+If the selected policy name equals or contains “Buyer Pays,” then:
+
+Auto-select “Charge separately” in Pricing & Shipping.
+
+Keep them in sync if the user toggles either control.
+
+Persist these choices on the draft immediately.
+
+D) Results modal
+
+Fixed size. Width about 900px, height about 80vh. Internal content scrolls.
+
+Always display request and response details for each step, including method, URL, status, headers, and body where applicable.
+
+Include a “Copy all” button. If a section is empty, show “N/A.”
+
+This modal must appear whether publish succeeds or fails.
+
+Guardrails and validation
+
+Marketplace: EBAY_US.
+
+Only use active policies.
+
+If policy fetch returns zero active policies, show a blocking banner with a link to eBay Business Policies and do not allow publish.
+
+Never proceed with a missing fulfillmentPolicyId.
+
+Save selected policyId to the draft right away so refresh does not lose it.
+
+Acceptance tests
+
+Title options
+
+Any option over 80 chars is clearly marked “Reference only,” disabled, and cannot be selected. Other options work and highlight correctly.
+
+Fulfillment policy fetch and persistence
+
+Opening the dropdown shows my two real policies from eBay with their live names.
+
+Selecting one saves the fulfillmentPolicyId on the draft immediately. Reloading the page keeps the same selection.
+
+Sync behavior
+
+Selecting “Free Domestic Shipping” auto-sets “Include in price.”
+
+Selecting “Buyer Pays” auto-sets “Charge separately.”
+
+Toggling “Include in price” or “Charge separately” flips the policy selection accordingly, with both sections staying in sync and saved to the draft.
+
+Publish and modal
+
+The traced publish request includes the exact fulfillmentPolicyId that is saved on the draft.
+
+On success or error, the modal opens at a fixed size and scrolls internally. All request and response details are visible. Copy all works.
+
+Minimal test script to run repeatedly until green
+
+Go to Inventory. Search “dog water” or any item in screenshots. Click Create Listing.
+
+Confirm title list marks the original Amazon title as reference only if over 80. Select a valid short title.
+
+Open Fulfillment Policy. See the two live policies from eBay. Select “Buyer Pays” and confirm Pricing & Shipping flips to “Charge separately.” Switch back to “Free Domestic Shipping” and confirm it flips to “Include in price.”
+
+Save. Reload the page. Prior selections persist.
+
+Upload the two real images. Approve & Publish to eBay.
+
+If anything fails, use the modal details to fix and retry until publish succeeds.
