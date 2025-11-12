@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { VineItem, Listing } from "@shared/schema";
+import { PublishModal } from "@/components/PublishModal";
 import {
   Select,
   SelectContent,
@@ -63,6 +64,9 @@ export default function DraftPage() {
   const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
   const [selectedFulfillmentPolicyId, setSelectedFulfillmentPolicyId] = useState<string | null>(null);
   const [selectedFulfillmentPolicyName, setSelectedFulfillmentPolicyName] = useState<string | null>(null);
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [publishState, setPublishState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [publishResult, setPublishResult] = useState<any>(null);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -275,21 +279,25 @@ export default function DraftPage() {
       formData.append("dimsW", dimsW);
       formData.append("dimsH", dimsH);
 
+      // Open modal and set loading state
+      setPublishModalOpen(true);
+      setPublishState("loading");
+      setPublishResult(null);
+
       return apiRequest("POST", "/api/listings/publish", formData);
     },
-    onSuccess: () => {
-      toast({
-        title: "Listing published!",
-        description: "Your item is now live on eBay",
-      });
+    onSuccess: (data: any) => {
+      setPublishState("success");
+      setPublishResult(data);
       queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
-      setLocation("/orders");
     },
-    onError: (error: Error) => {
-      toast({
-        title: "Publish failed",
-        description: error.message,
-        variant: "destructive",
+    onError: (error: any) => {
+      setPublishState("error");
+      setPublishResult({
+        error: error.message,
+        details: error.details || [error.message],
+        failedStep: error.failedStep,
+        trace: error.trace,
       });
     },
   });
@@ -1046,6 +1054,22 @@ export default function DraftPage() {
           </div>
         </div>
       </div>
+
+      {/* Publish Modal */}
+      <PublishModal
+        isOpen={publishModalOpen}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishState("idle");
+          setPublishResult(null);
+          // Navigate to orders page on success
+          if (publishState === "success") {
+            setLocation("/orders");
+          }
+        }}
+        publishState={publishState}
+        result={publishResult}
+      />
     </div>
   );
 }
