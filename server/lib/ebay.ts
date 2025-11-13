@@ -942,6 +942,8 @@ export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: 
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
+        "Accept-Language": "en-US",
+        "Content-Language": "en-US",
       },
     });
     
@@ -986,6 +988,8 @@ export async function getUserAccountInfo(): Promise<any> {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "Accept-Language": "en-US",
+      "Content-Language": "en-US",
     },
   });
   
