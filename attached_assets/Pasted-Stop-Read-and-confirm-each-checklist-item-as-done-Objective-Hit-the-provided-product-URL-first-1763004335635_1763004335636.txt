@@ -1,0 +1,66 @@
+Stop. Read and confirm each checklist item as done.
+
+Objective
+Hit the provided product URL first to get the freshest info. If that fails or is blocked, fall back through cache and search. Never show fake items. Price older than 90 days triggers refresh down the chain.
+
+Secrets and config
+1) Remove BING_SEARCH_API_KEY everywhere.
+2) Ensure GOOGLE_CSE_API_KEY is set.
+3) Set GOOGLE_CSE_ID from my cx= value.
+4) Feature flags: CC_LOOKUP=on, CSE_LOOKUP=on, AI_ASSIST_LOOKUP=off by default, WAYBACK_LOOKUP=on.
+
+Data model
+Tables with unique index on canonical_url_hash:
+- products(id, canonical_url, canonical_url_hash, domain, title, brand, image_url, currency, current_price, price_verified_at, image_source, price_source, last_fallback_step, created_at, updated_at)
+- price_history(id, product_id, price, currency, source, verified_at)
+- source_facts(id, product_id, source_type, source_url, snapshot_date, confidence, blob_ref)
+
+Canonicalization
+Strip tracking params, resolve shorteners, lower-case host, normalize path, compute canonical_url and canonical_url_hash.
+
+Pipeline order
+1) Direct fetch of provided URL. Use desktop User Agent, one redirect follow, 3s timeout. Extract Open Graph, then JSON LD, then DOM. If price found, set price_verified_at=now. Return immediately to UI.
+2) If direct fetch blocks or times out, show any existing cached title and image while continuing in background. If cached price exists and price_verified_at is less than 90 days, use it. If cached price is missing or older than 90 days, continue to step 3.
+3) Common Crawl snapshot, else Wayback within 180 days. Extract OG or JSON LD. If price found, set price_verified_at=now.
+4) Google Programmable Search. Build a query from domain and a clean title hint. Choose candidates by same host and title similarity. Fetch candidate page and extract OG or JSON LD. If price found, set price_verified_at=now.
+5) AI assist on snapshot only for missing title or image. Never accept an AI price without a second confirming source. Enforce minimum image width and sane aspect ratio.
+6) Manual entry. Show brand placeholder, allow paste or upload for image and manual price. Tag image_source=manual and price_source=manual.
+
+Caching and freshness
+- Title and image persist until a higher confidence source appears.
+- Price freshness window is 90 days. Older than 90 days triggers steps 3 to 5 automatically. If no new price is confirmed, show “Check price” and keep the old one.
+- Store last_fallback_step for provenance. Respect cache headers when present.
+
+Post save verifier
+POST /api/verify/:productId enqueues a verify job. Re-run steps 3 to 5. Update image or price only when confidence improves. Append price_history and update price_verified_at.
+
+UI
+- Add to Wants: show fresh direct fetch results when available. If blocked, show cached title and image immediately with a neutral “Check price” while background refresh runs. If all fails, show manual fields.
+- Landing and Discover: only real public Wants. No seeded fake items.
+- Card tooltip: show last verified time and source.
+- Keep Amazon affiliate tagging in buy redirect. Tag only in production using AMAZON_TRACKING_ID.
+
+Google CSE helper
+googleCseLookup(query) calls the JSON API with GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID. Add 24 hour cache per query. Rate limit conservatively.
+
+Testing
+Unit
+- Canonicalization stability and hash.
+- Price freshness logic at 90 days boundary.
+- Snapshot parser fills image and title.
+- CSE ranking prefers same host and extracts OG or JSON LD.
+- AI price is rejected without a second source.
+
+Integration
+- Direct fetch success returns immediately and does not hit search.
+- Direct fetch blocked uses cache for UI and continues background refresh.
+- Cache with stale price triggers refresh and returns stale flag.
+
+E2E
+- Add a Walmart URL. First attempt blocked, snapshot or CSE fills data. Second attempt returns from cache. After simulating 91 days, new attempt refreshes price.
+- Manual path works and flags sources as manual.
+- Verify job updates an old price and stamps price_verified_at.
+
+Deliverables
+- File list and migration names.
+- Replit.md report showing which step produced each test result, pass counts for unit, integration, E2E, and one masked Amazon URL example from buy redirect.
