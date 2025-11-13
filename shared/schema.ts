@@ -66,9 +66,11 @@ export const vineItems = pgTable("vine_items", {
 
 // Inventory items table
 // One-to-one relationship: each vine item can have exactly ONE inventory record
+// Can also hold eBay-synced items without a corresponding Vine item
 export const inventoryItems = pgTable("inventory_items", {
   inventoryId: varchar("inventory_id").primaryKey().default(sql`gen_random_uuid()`),
-  vineItemId: varchar("vine_item_id").notNull().unique().references(() => vineItems.vineItemId, { onDelete: "cascade" }),
+  vineItemId: varchar("vine_item_id").unique().references(() => vineItems.vineItemId, { onDelete: "cascade" }),
+  source: text("source").notNull().default("vine"),
   binLocation: text("bin_location"),
   condition: text("condition").notNull().default("New"),
   photoSetId: varchar("photo_set_id"),

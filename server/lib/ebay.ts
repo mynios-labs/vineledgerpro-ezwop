@@ -926,3 +926,73 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
     await createOrUpdateInventoryItem(sku, item);
   }
 }
+
+export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: string; product: any }[]> {
+  const token = await getAccessToken();
+  const allItems: { sku: string; product: any }[] = [];
+  let offset = 0;
+  
+  console.log("[eBay] Fetching all inventory items...");
+  
+  while (true) {
+    const url = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item?limit=${limit}&offset=${offset}`;
+    
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Get inventory items failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+    
+    const data = await response.json();
+    const items = data.inventoryItems || [];
+    
+    if (items.length === 0) {
+      break;
+    }
+    
+    allItems.push(...items);
+    console.log(`[eBay] Fetched ${items.length} inventory items (offset: ${offset}, total so far: ${allItems.length})`);
+    
+    // Check if there are more pages
+    if (!data.nextPage || items.length < limit) {
+      break;
+    }
+    
+    offset += limit;
+  }
+  
+  console.log(`[eBay] Fetched total of ${allItems.length} inventory items`);
+  return allItems;
+}
+
+export async function getUserAccountInfo(): Promise<any> {
+  const token = await getAccessToken();
+  const EBAY_APIZ_BASE = process.env.EBAY_ENV === "production" 
+    ? "https://apiz.ebay.com"
+    : "https://apiz.sandbox.ebay.com";
+  const url = `${EBAY_APIZ_BASE}/commerce/identity/v1/user/`;
+  
+  console.log("[eBay] Fetching user account information...");
+  
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(`Get user account failed: ${response.status} - ${JSON.stringify(errorData)}`);
+  }
+  
+  return response.json();
+}
