@@ -4350,6 +4350,14 @@ Output only JSON:
         { configKey: "signatureThresholdCents", value: 25000 }, // $250
         { configKey: "insuranceCapCents", value: 50000 }, // $500
         { configKey: "shipCutoffTime", value: "16:00" }, // 4 PM
+        { 
+          configKey: "parcelPresets", 
+          value: [
+            { label: "Small Box", length: 8, width: 6, height: 4, weight: 8 },
+            { label: "Medium Box", length: 12, width: 10, height: 6, weight: 16 },
+            { label: "Large Box", length: 18, width: 14, height: 10, weight: 32 }
+          ] 
+        },
       ];
 
       for (const setting of defaults) {
@@ -5045,6 +5053,131 @@ Output only JSON:
 
     } catch (error: any) {
       console.error("[Confirm Shipped] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error 
+      });
+    }
+  });
+
+  // POST /api/orders/:id/void-label - Void label and request refund (only within carrier window)
+  app.post("/api/orders/:id/void-label", async (req, res) => {
+    try {
+      const { id: orderId } = req.params;
+
+      // Get order
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderId, orderId),
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Validate order has a label to void
+      if (!order.shippoLabelId || !order.shippoTransactionId) {
+        return res.status(400).json({ 
+          error: "Order does not have a label to void",
+          shippingStatus: order.shippingStatus 
+        });
+      }
+
+      // Validate shipping status is label_purchased (not already shipped)
+      if (order.shippingStatus !== "label_purchased") {
+        return res.status(400).json({ 
+          error: "Can only void labels that are purchased but not yet shipped",
+          shippingStatus: order.shippingStatus 
+        });
+      }
+
+      console.log("[Void Label] Requesting refund for label:", {
+        orderId,
+        transactionId: order.shippoTransactionId,
+      });
+
+      // Request refund from Shippo (OUTSIDE transaction - compensation pattern)
+      const refundResult = await requestRefund(order.shippoTransactionId);
+
+      if (!refundResult || refundResult.status === "ERROR" || refundResult.status === "INVALID") {
+        console.error("[Void Label] Refund request failed:", refundResult);
+        return res.status(424).json({ 
+          error: "Shippo refund request failed",
+          shippoStatus: refundResult?.status,
+          shippoMessage: refundResult?.messages || refundResult?.message,
+          details: refundResult 
+        });
+      }
+
+      console.log("[Void Label] Refund requested successfully:", {
+        refundId: refundResult.object_id,
+        status: refundResult.status,
+        amountCents: refundResult.amount ? Math.round(parseFloat(refundResult.amount) * 100) : null,
+      });
+
+      // Atomic transaction: clear label data, update status, write timeline events
+      await db.transaction(async (tx) => {
+        // Clear label data and set status back to unshipped
+        await tx
+          .update(orders)
+          .set({
+            shippingStatus: "unshipped",
+            shippoLabelId: null,
+            shippoLabelUrl: null,
+            shippoTransactionId: null,
+            shippoRateId: null,
+            trackingNumber: null,
+            shippoCarrier: null,
+            shippoService: null,
+            shippingCostCents: null,
+            labelPurchasedAt: null,
+            shippedAt: null,
+          })
+          .where(and(
+            eq(orders.orderId, orderId),
+            eq(orders.ebayOrderId, order.ebayOrderId)
+          ));
+
+        // Write timeline event: label_voided
+        await tx.insert(orderTimelineEvents).values({
+          orderId,
+          eventType: "label_voided",
+          note: `Shipping label voided. Status: label_purchased → unshipped`,
+          metadata: {
+            transactionId: order.shippoTransactionId,
+            trackingNumber: order.trackingNumber,
+            from: "label_purchased",
+            to: "unshipped",
+          },
+        });
+
+        // Write timeline event: refund_posted
+        await tx.insert(orderTimelineEvents).values({
+          orderId,
+          eventType: "refund_posted",
+          note: `Refund posted by carrier. Amount: $${refundResult.amount || 'N/A'}`,
+          metadata: {
+            refundId: refundResult.object_id,
+            refundStatus: refundResult.status,
+            amountCents: refundResult.amount ? Math.round(parseFloat(refundResult.amount) * 100) : null,
+            currency: refundResult.currency || "USD",
+          },
+        });
+      });
+
+      console.log("[Void Label] Label voided and refund recorded atomically:", {
+        refundId: refundResult.object_id,
+        status: refundResult.status,
+      });
+
+      res.json({
+        success: true,
+        refundId: refundResult.object_id,
+        refundStatus: refundResult.status,
+        amountCents: refundResult.amount ? Math.round(parseFloat(refundResult.amount) * 100) : null,
+      });
+
+    } catch (error: any) {
+      console.error("[Void Label] Error:", error);
       res.status(500).json({ 
         error: error.message,
         details: error.response?.data || error 
