@@ -45,6 +45,40 @@ import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Zod schemas for eBay order validation
+const ebayOrderLineItemSchema = z.object({
+  lineItemId: z.string().min(1).optional(),
+  quantity: z.number().int().positive(),
+  sku: z.string().optional(),
+  title: z.string().optional(),
+  legacyItemId: z.string().optional(),
+  legacyVariationId: z.string().optional(),
+}).refine(
+  (item) => item.lineItemId || item.legacyItemId,
+  { message: "LineItem must have either lineItemId or legacyItemId" }
+);
+
+const ebayOrderSchema = z.object({
+  orderId: z.string(),
+  lineItems: z.array(ebayOrderLineItemSchema).min(1),
+  buyer: z.object({
+    username: z.string().optional(),
+  }).optional(),
+  pricingSummary: z.object({
+    total: z.object({
+      value: z.string().optional(),
+      currency: z.string().optional(),
+    }).optional(),
+  }).optional(),
+  fulfillmentStartInstructions: z.array(z.any()).optional(),
+  paymentSummary: z.object({
+    totalDueSeller: z.object({
+      value: z.string().optional(),
+      currency: z.string().optional(),
+    }).optional(),
+  }).optional(),
+});
+
 // Helper: Truncate title to eBay's 80-char limit at word boundaries
 function truncateTitle(title: string, maxLength: number = 80): string {
   if (title.length <= maxLength) return title;
@@ -4801,80 +4835,119 @@ Output only JSON:
         return res.status(400).json({ error: "Order missing eBay order ID" });
       }
 
-      // Get lineItems from cached eBay order or fetch fresh
+      // Get lineItems from cached eBay order or fetch fresh with Zod validation
       let lineItems: Array<{ lineItemId: string; quantity: number }> = [];
-      let fetchedEbayOrder: any = null;
-      
-      // Safe JSON parsing for ebayOrderJson
-      if (order.ebayOrderJson && typeof order.ebayOrderJson === 'object') {
-        const orderJson = order.ebayOrderJson as any;
-        if (Array.isArray(orderJson.lineItems) && orderJson.lineItems.length > 0) {
-          // Use cached lineItems
-          lineItems = orderJson.lineItems.map((item: any) => ({
-            lineItemId: item.lineItemId,
-            quantity: item.quantity || 1,
-          }));
-          console.log("[Confirm Shipped] Using cached lineItems:", lineItems.length);
+      let validatedOrder: z.infer<typeof ebayOrderSchema> | null = null;
+
+      // Try cached order with Zod validation
+      if (order.ebayOrderJson) {
+        try {
+          // Parse if stored as string, or use directly if object
+          const cachedData = typeof order.ebayOrderJson === 'string' 
+            ? JSON.parse(order.ebayOrderJson)
+            : order.ebayOrderJson;
+          
+          const parseResult = ebayOrderSchema.safeParse(cachedData);
+          if (parseResult.success) {
+            validatedOrder = parseResult.data;
+            // Filter and map with same logic as fresh fetch
+            lineItems = validatedOrder.lineItems
+              .filter(item => item.lineItemId || item.legacyItemId)
+              .map(item => ({
+                lineItemId: item.lineItemId || item.legacyItemId!,
+                quantity: item.quantity,
+              }));
+            
+            // Ensure cached data has valid identifiers
+            if (lineItems.length === 0) {
+              console.log("[Confirm Shipped] Cached order has no identifiable items, will fetch fresh");
+              // Clear validatedOrder to force fresh fetch
+              validatedOrder = null;
+              lineItems = [];
+            } else {
+              console.log("[Confirm Shipped] Using cached lineItems:", lineItems.length);
+            }
+          } else {
+            console.log("[Confirm Shipped] Cached order invalid, will fetch fresh:", parseResult.error.message);
+          }
+        } catch (parseError) {
+          console.log("[Confirm Shipped] Cached JSON parse error, will fetch fresh");
         }
       }
-      
+
       // Fetch fresh if cache missing or invalid
+      let shouldCacheValidatedOrder = false;
       if (lineItems.length === 0) {
-        console.log("[Confirm Shipped] No cached lineItems, fetching from eBay");
+        console.log("[Confirm Shipped] Fetching from eBay");
         try {
-          fetchedEbayOrder = await getOrder(order.ebayOrderId);
+          const fetchedEbayOrder = await getOrder(order.ebayOrderId);
+          const parseResult = ebayOrderSchema.safeParse(fetchedEbayOrder);
+          
+          if (!parseResult.success) {
+            console.error("[Confirm Shipped] eBay order validation failed:", parseResult.error);
+            
+            // Clear invalid cache to force fresh fetch on retry
+            await db
+              .update(orders)
+              .set({ ebayOrderJson: null })
+              .where(and(
+                eq(orders.orderId, orderId),
+                eq(orders.ebayOrderId, order.ebayOrderId)
+              ));
+            
+            return res.status(502).json({ 
+              error: "Invalid eBay order structure",
+              details: "eBay order does not match expected schema",
+              validationErrors: parseResult.error.issues,
+            });
+          }
+          
+          validatedOrder = parseResult.data;
+          
+          // Extract lineItems with identifier validation
+          lineItems = validatedOrder.lineItems
+            .filter(item => item.lineItemId || item.legacyItemId)
+            .map(item => ({
+              lineItemId: item.lineItemId || item.legacyItemId!,
+              quantity: item.quantity,
+            }));
+          
+          // Ensure we have identifiable lineItems
+          if (lineItems.length === 0) {
+            console.error("[Confirm Shipped] No identifiable line items in eBay order");
+            
+            // Clear invalid cache
+            await db
+              .update(orders)
+              .set({ ebayOrderJson: null })
+              .where(and(
+                eq(orders.orderId, orderId),
+                eq(orders.ebayOrderId, order.ebayOrderId)
+              ));
+            
+            return res.status(502).json({ 
+              error: "No identifiable line items in eBay order",
+              details: "All line items missing both lineItemId and legacyItemId"
+            });
+          }
+          
+          // Mark for caching after successful transaction
+          shouldCacheValidatedOrder = true;
+          console.log("[Confirm Shipped] Validated eBay order, will cache after transaction");
         } catch (error: any) {
           console.error("[Confirm Shipped] eBay fetch failed:", error);
-          return res.status(500).json({ 
+          return res.status(502).json({ 
             error: "Failed to fetch order from eBay",
             details: error.message 
           });
         }
-        
-        // Validate fetched order structure
-        if (!fetchedEbayOrder || typeof fetchedEbayOrder !== 'object') {
-          return res.status(500).json({ error: "Invalid eBay order response" });
-        }
-        
-        if (!Array.isArray(fetchedEbayOrder.lineItems) || fetchedEbayOrder.lineItems.length === 0) {
-          return res.status(500).json({ 
-            error: "eBay order has no line items",
-            details: "Cannot create fulfillment without line items"
-          });
-        }
-        
-        // Extract lineItems with validation
-        lineItems = fetchedEbayOrder.lineItems
-          .filter((item: any) => item && item.lineItemId)
-          .map((item: any) => ({
-            lineItemId: item.lineItemId,
-            quantity: item.quantity || 1,
-          }));
-        
-        // Final guard: ensure we have valid lineItems
-        if (lineItems.length === 0) {
-          return res.status(500).json({ 
-            error: "No valid line items found in eBay order",
-            details: "All line items missing required lineItemId"
-          });
-        }
-        
-        // Persist validated eBay order for future use
-        await db
-          .update(orders)
-          .set({
-            ebayOrderJson: fetchedEbayOrder,
-          })
-          .where(eq(orders.orderId, orderId));
-        
-        console.log("[Confirm Shipped] Cached eBay order JSON for future use");
       }
 
-      // Critical safety check: lineItems must exist before calling eBay
-      if (!lineItems || lineItems.length === 0) {
-        return res.status(500).json({ 
-          error: "No line items available for fulfillment",
-          details: "This should never happen - contact support"
+      // Final safety check
+      if (lineItems.length === 0) {
+        return res.status(502).json({ 
+          error: "No line items available after validation",
+          details: "eBay order has no valid line items"
         });
       }
 
@@ -4897,7 +4970,7 @@ Output only JSON:
         lineItems: lineItems.length,
       });
 
-      // Post tracking to eBay
+      // Post tracking to eBay FIRST (compensation pattern - outside transaction)
       const fulfillmentResult = await createShippingFulfillment({
         orderId: order.ebayOrderId,
         lineItems,
@@ -4907,44 +4980,59 @@ Output only JSON:
 
       const shippedAtTime = new Date();
 
-      // Update order status
-      await db
-        .update(orders)
-        .set({
-          shippingStatus: "shipped",
-          shippedAt: shippedAtTime,
-          ebayFulfillmentId: fulfillmentResult.fulfillmentId || order.trackingNumber,
-        })
-        .where(eq(orders.orderId, orderId));
+      // Atomic DB updates in transaction
+      await db.transaction(async (tx) => {
+        // Update order status
+        await tx
+          .update(orders)
+          .set({
+            shippingStatus: "shipped",
+            shippedAt: shippedAtTime,
+            ebayFulfillmentId: fulfillmentResult.fulfillmentId || order.trackingNumber,
+          })
+          .where(eq(orders.orderId, orderId));
 
-      console.log("[Confirm Shipped] Order marked as shipped:", {
+        // Write timeline event: tracking_posted
+        await tx.insert(orderTimelineEvents).values({
+          orderId,
+          eventType: "tracking_posted",
+          note: `Tracking posted to eBay: ${order.trackingNumber}`,
+          metadata: {
+            trackingNumber: order.trackingNumber,
+            carrier: ebayCarrierCode,
+            fulfillmentId: fulfillmentResult.fulfillmentId,
+            lineItems: lineItems.length,
+          },
+        });
+
+        // Write timeline event: confirmed_shipped
+        await tx.insert(orderTimelineEvents).values({
+          orderId,
+          eventType: "confirmed_shipped",
+          note: `Order marked as shipped. Status: label_purchased → shipped`,
+          metadata: {
+            from: "label_purchased",
+            to: "shipped",
+            shippedAt: shippedAtTime.toISOString(),
+          },
+        });
+
+        // Cache validated order if we fetched fresh (atomic with status change)
+        if (shouldCacheValidatedOrder && validatedOrder) {
+          await tx
+            .update(orders)
+            .set({ ebayOrderJson: validatedOrder })
+            .where(and(
+              eq(orders.orderId, orderId),
+              eq(orders.ebayOrderId, order.ebayOrderId)
+            ));
+        }
+      });
+
+      console.log("[Confirm Shipped] Order marked as shipped atomically:", {
         fulfillmentId: fulfillmentResult.fulfillmentId,
         shippedAt: shippedAtTime,
-      });
-
-      // Write timeline event: tracking_posted
-      await db.insert(orderTimelineEvents).values({
-        orderId,
-        eventType: "tracking_posted",
-        note: `Tracking posted to eBay: ${order.trackingNumber}`,
-        metadata: {
-          trackingNumber: order.trackingNumber,
-          carrier: ebayCarrierCode,
-          fulfillmentId: fulfillmentResult.fulfillmentId,
-          lineItems: lineItems.length,
-        },
-      });
-
-      // Write timeline event: confirmed_shipped
-      await db.insert(orderTimelineEvents).values({
-        orderId,
-        eventType: "confirmed_shipped",
-        note: `Order marked as shipped. Status: label_purchased → shipped`,
-        metadata: {
-          from: "label_purchased",
-          to: "shipped",
-          shippedAt: shippedAtTime.toISOString(),
-        },
+        cached: shouldCacheValidatedOrder,
       });
 
       res.json({
