@@ -39,6 +39,13 @@ Core entities include Vine Item Management, Inventory & Listings, Order Fulfillm
 Features include a forbidden word list, cosine similarity checks to prevent Amazon TOS violations, EXIF data scrubbing, and dual address profiles for returns and shipping. Listings undergo a validation flow before publication.
 
 ### System Design Choices
+-   **Listings Sync System:** Implements eBay-first synchronization for listing data with drift detection:
+    -   **Sync Endpoints:** POST /api/listings/sync-from-ebay (bulk), POST /api/listings/:id/sync-from-ebay (single)
+    -   **Drift Detection:** Compares local cached values (title, priceCents, categoryId) against eBay offer data before updating. Drift is stored in driftSnapshot JSON field with structure { fieldName: { local: value, ebay: value } }.
+    -   **Price Validation:** Defensive parsing with explicit null/undefined/empty string checks, Number.isFinite() validation, and fallback to existing price when eBay omits or corrupts price data.
+    -   **Zod Validation:** ebayOfferSchema validates eBay API responses before database updates to prevent injection.
+    -   **UI Features:** Sync now button, last synced timestamp, per-listing pull fresh buttons, status/drift filters, drift details drawer showing local vs eBay values side-by-side.
+    -   **Known Limitations:** Current drift tracking overwrites previous drift history (snapshot-based, not append-only). Field coverage limited to title, priceCents, categoryId, and status (does not sync quantity, fulfillment policies, or shipping profiles).
 -   **eBay Orders Sync System:** Implements complete eBay orders synchronization with drift detection, a 2-step shipping workflow, and background sync every 15 minutes. It handles 429 retries with exponential backoff and tracks shipping statuses.
 -   **2-Step Shipping Workflow:** Production-ready workflow with complete error handling and data validation:
     -   **Quote Rates (POST /api/orders/:id/rates):** Fetches Shippo rates with address validation, persists chosen rate with defensive validation, NaN guards, and array cloning for immutability. Returns structured ADDRESS_VALIDATION_FAILED errors with validation messages when ship-to or ship-from addresses fail Shippo validation.
