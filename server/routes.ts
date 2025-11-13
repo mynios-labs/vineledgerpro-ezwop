@@ -23,6 +23,7 @@ import {
   importConflicts,
   amazon1099Data,
   ebay1099Data,
+  config,
   type InsertImport,
   type InsertImportRow,
   type InsertVineItem,
@@ -33,6 +34,7 @@ import {
   insertOrderTimelineEventSchema,
   insertAmazon1099Schema,
   insertEbay1099Schema,
+  insertConfigSchema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies } from "./lib/ebay";
@@ -4240,6 +4242,93 @@ Output only JSON:
       res.status(500).json({ error: error.message });
     }
   });
+
+  // ============================================================================
+  // Config Routes
+  // ============================================================================
+
+  // GET /api/config - Get all config settings
+  app.get("/api/config", async (_req, res) => {
+    try {
+      const configEntries = await db.select().from(config);
+      const configMap: Record<string, any> = {};
+      
+      for (const entry of configEntries) {
+        configMap[entry.configKey] = entry.value;
+      }
+      
+      res.json(configMap);
+    } catch (error: any) {
+      console.error("[Config] Error fetching config:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/config/:key - Update a single config setting
+  app.post("/api/config/:key", async (req, res) => {
+    try {
+      const { key } = req.params;
+
+      if (!key) {
+        return res.status(400).json({ error: "Config key is required" });
+      }
+
+      // Validate request body using insertConfigSchema
+      const validation = insertConfigSchema.safeParse({
+        configKey: key,
+        value: req.body.value,
+      });
+
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: validation.error.errors,
+        });
+      }
+
+      // Upsert config setting
+      await db
+        .insert(config)
+        .values(validation.data)
+        .onConflictDoUpdate({
+          target: config.configKey,
+          set: { value: validation.data.value, updatedAt: new Date() },
+        });
+
+      res.json({ key, value: validation.data.value });
+    } catch (error: any) {
+      console.error("[Config] Error updating config:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Initialize default shipping settings if they don't exist
+  async function initializeDefaultSettings() {
+    try {
+      const existingSettings = await db.select().from(config);
+      const existingKeys = new Set(existingSettings.map((s) => s.configKey));
+
+      const defaults: Array<{ configKey: string; value: any }> = [
+        { configKey: "autoMarkShipped", value: false },
+        { configKey: "autoBuyLabels", value: false },
+        { configKey: "signatureThresholdCents", value: 25000 }, // $250
+        { configKey: "insuranceCapCents", value: 50000 }, // $500
+        { configKey: "shipCutoffTime", value: "16:00" }, // 4 PM
+      ];
+
+      for (const setting of defaults) {
+        if (!existingKeys.has(setting.configKey)) {
+          await db.insert(config).values(setting);
+          console.log(`[Config] Initialized default setting: ${setting.configKey} = ${JSON.stringify(setting.value)}`);
+        }
+      }
+    } catch (error: any) {
+      console.error("[Config] Error initializing default settings:", error);
+    }
+  }
+
+  // Initialize settings on server start
+  initializeDefaultSettings();
 
   return httpServer;
 }

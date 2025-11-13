@@ -281,6 +281,13 @@ export const importConflicts = pgTable("import_conflicts", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Config table (application settings)
+export const config = pgTable("config", {
+  configKey: varchar("config_key").primaryKey(),
+  value: json("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Amazon 1099 data table
 export const amazon1099Data = pgTable("amazon_1099_data", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -390,6 +397,7 @@ export const insertHealthEventSchema = createInsertSchema(healthEvents).omit({ i
 export const insertImportConflictSchema = createInsertSchema(importConflicts).omit({ conflictId: true, createdAt: true });
 export const insertAmazon1099Schema = createInsertSchema(amazon1099Data).omit({ id: true, userId: true, enteredAt: true, updatedAt: true });
 export const insertEbay1099Schema = createInsertSchema(ebay1099Data).omit({ id: true, userId: true, enteredAt: true, updatedAt: true });
+export const insertConfigSchema = createInsertSchema(config).omit({ updatedAt: true });
 
 // Types
 export type Import = typeof imports.$inferSelect;
@@ -424,3 +432,5 @@ export type Amazon1099Data = typeof amazon1099Data.$inferSelect;
 export type InsertAmazon1099 = z.infer<typeof insertAmazon1099Schema>;
 export type Ebay1099Data = typeof ebay1099Data.$inferSelect;
 export type InsertEbay1099 = z.infer<typeof insertEbay1099Schema>;
+export type Config = typeof config.$inferSelect;
+export type InsertConfig = z.infer<typeof insertConfigSchema>;

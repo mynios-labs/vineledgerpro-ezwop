@@ -1,0 +1,110 @@
+Directive for Replit Agent
+Current state to acknowledge
+
+Orders sync is live with 15 minute auto sync and a Sync now button.
+
+Drift detection exists and an append-only order_timeline_events table is in place.
+
+What is missing is a working, automated two step shipping flow that lets me print the label, then confirm shipped, with idempotency and rich diagnostics.
+
+Problem to solve
+
+Build a fully automated shipping pipeline for paid orders. The app should auto prepare everything. I only need to print the label and then confirm shipped. Automation is the default, and I can override before purchase or void after. Never double charge and never post tracking twice.
+
+Build this now
+1) Rates and buy
+
+Endpoint: POST /api/orders/:id/rates
+Use buyer address from eBay, my ship-from settings, parcel preset, signature rule, default insurance. Persist the chosen rate. Return the three cheapest plus a complete list. Write a “Rates quoted” timeline event.
+
+Endpoint: POST /api/orders/:id/buy {rateToken, insurance, signature}
+Idempotent. If a label already exists, return the saved label and tracking. If not, purchase via Shippo, persist labelId, labelUrl, tracking, carrier, service, cost, purchasedAt. Set shippingStatus=label_purchased. Write a “Label purchased” event.
+
+Setting: “Auto buy labels”. If ON, call buy immediately after rates are computed.
+
+2) Print, confirm shipped, and tracking
+
+Endpoint: GET /api/orders/:id/label
+Return the saved labelUrl for printing. Never rebuy on print.
+
+Endpoint: POST /api/orders/:id/confirm-shipped
+Idempotent. If tracking was already posted, return current state. Otherwise post tracking to eBay, set shippingStatus=shipped, persist carrier code and postedAt, and write “Tracking posted to eBay” and “Marked shipped” events.
+
+Setting: “Auto mark shipped after purchase”. Default OFF. If ON, call confirm-shipped right after a successful buy.
+
+3) Void and reprint lifecycle
+
+Endpoint: POST /api/orders/:id/void-label
+Only within the carrier void window. On success, persist refund info, clear labelId and tracking, set shippingStatus=unshipped, write “Label voided” and “Refund posted” events.
+
+Reprint uses GET /api/orders/:id/label. Always return the same PDF. Never purchase again.
+
+4) Buyer changes and exceptions
+
+On Unshipped orders, add “Change options”. Allow editing service, insurance, signature, and ship-from preset for that order. Saving requotes and updates the selected rate.
+
+On intake, auto validate and normalize the address. If Shippo flags issues, show an address correction modal before buy. Allow a one time address override with an audit note that is stored with the order.
+
+5) Automation rules and inventory checks
+
+When a Paid order is synced, decrement on-hand quantity locally and verify current eBay quantity. If drift is detected, add a drift note and show a “Fix quantity” action.
+
+Service rules in Settings. Signature required at or above a price threshold. Insurance defaults to item price up to a cap. P.O. Box forces USPS. Oversize and dimensional weight detection uses stored product dimensions.
+
+Cutoff handling. A setting for daily ship cutoff time. If after cutoff, set ship date to next business day.
+
+Batch tools. “Print all ready labels” creates a combined print job and writes one event per order. Optional carrier pickup scheduling after batch; record pickup confirmation in the timeline.
+
+6) Webhooks, drift, and alerts
+
+Shippo webhook endpoint for tracking events and refunds. Update status and append events for in transit, out for delivery, delivered, exception, refund.
+
+If an order is marked shipped directly in eBay, detect on next sync, flip local to Shipped, and add a drift note.
+
+Alerts. In-app badge for new Paid orders and when a label becomes ready. Send a simple email for new Paid, label purchased, exception, and delivered. Respect quiet hours in Settings.
+
+7) Orders UI
+
+New page /orders with tabs: Unshipped, Label purchased, Shipped.
+
+Unshipped cards show a preselected service, a “Change options” button, and if Auto buy is OFF a “Buy label” button.
+
+After purchase, show “Print label” and “Confirm shipped”.
+
+Every order has a timeline drawer with Synced, Rates quoted, Label purchased, Tracking posted to eBay, Marked shipped, Webhook updates, Voided, Refund posted.
+
+8) Error handling and diagnostics
+
+All error modals follow the fixed width and scrollable body pattern used by the publish modal.
+
+Always include full request and response payloads and a Copy all button.
+
+Retry with exponential backoff for 429 responses. Preserve idempotency keys so repeating an action never buys twice or posts tracking twice.
+
+Guardrails
+
+eBay remains the source of truth. Keep the 15 minute auto sync and the Sync now button. Never push to eBay except on Confirm shipped or during listing publish that already exists.
+
+Tests must use real data. No fake orders or placeholder labels.
+
+Do not change working listing creation or edit flows. No bulk reconciliation in this phase.
+
+Acceptance tests Replit must run and pass
+
+Create a real Paid order in the test account. Click Sync now. Order appears under Unshipped and an alert badge shows.
+
+Rates are auto quoted on intake. Change service and insurance in “Change options”. Buy label. Status becomes Label purchased and a timeline event is written.
+
+Print label. Then Confirm shipped. Verify tracking is posted to eBay, status becomes Shipped, and timeline entries are added.
+
+Call buy again on the same order. The same label is returned. No second charge.
+
+Void a label within the carrier window on a fresh test order. Refund persists, status returns to Unshipped, and timeline shows Voided and Refund posted.
+
+Send Shippo webhook events for in transit and delivered. Timeline updates without manual refresh.
+
+Manually mark a different test order shipped in eBay. Sync. Local status flips to Shipped and a drift note is recorded.
+
+Confirm all error modals stay fixed size, scroll properly, and include full API request and response bodies with Copy all.
+
+That is the complete work needed to make shipping operational, automated, and drift-proof while preserving clean manual overrides.
