@@ -40,6 +40,13 @@ Features include a forbidden word list, cosine similarity checks to prevent Amaz
 
 ### System Design Choices
 -   **eBay Orders Sync System:** Implements complete eBay orders synchronization with drift detection, a 2-step shipping workflow, and background sync every 15 minutes. It handles 429 retries with exponential backoff and tracks shipping statuses.
+-   **2-Step Shipping Workflow:** Production-ready workflow with complete error handling and data validation:
+    -   **Quote Rates (POST /api/orders/:id/rates):** Fetches Shippo rates, persists chosen rate with defensive validation, NaN guards, and array cloning for immutability.
+    -   **Buy Label (POST /api/orders/:id/buy):** Idempotent label purchase with atomic transactions, normalized carrier/service/cost extraction, and comprehensive error handling. Sets `shippingStatus=label_purchased`.
+    -   **Confirm Shipped (POST /api/orders/:id/confirm-shipped):** Posts tracking to eBay fulfillment API with Zod validation, atomic transactions, defensive filtering, short-circuit logic for invalid cache, and legacyItemId fallback support. Uses compensation-friendly transaction pattern (external API calls first, then DB updates in transaction) to keep locks short while maintaining consistency.
+    -   **Zod Validation:** `ebayOrderSchema` and `ebayOrderLineItemSchema` validate eBay order data with support for legacy orders (refine requires lineItemId OR legacyItemId). Both cached and fresh-fetch paths filter items and use fallback logic consistently.
+    -   **Timeline Events:** All shipping actions write detailed timeline events with metadata for audit trails.
+    -   **Shipping Settings:** Configurable automation settings (autoMarkShipped, autoBuyLabels, signatureThreshold, insuranceCap, shipCutoffTime) with Zod-validated GET/POST endpoints.
 -   **Listing Management System:** Provides comprehensive editing for published eBay listings including title, description, price, category, fulfillment policy, dimensions, weight, and quantity. It ensures quantity persistence and eBay-first updates to prevent data drift.
 -   **eBay Fulfillment Policy Integration:** Fetches and manages eBay fulfillment policies with UI selection and validation during listing creation.
 -   **Image Hosting:** Implemented a filesystem-based image hosting solution with Express static serving for publicly accessible HTTPS URLs, resolving eBay image rejection issues.
