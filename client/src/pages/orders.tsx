@@ -10,10 +10,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Order } from "@shared/schema";
 import { useState } from "react";
 import { TimelineDrawer } from "@/components/timeline-drawer";
+import { AddressValidationModal } from "@/components/address-validation-modal";
 
 export default function OrdersPage() {
   const { toast } = useToast();
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [addressValidationErrors, setAddressValidationErrors] = useState<any>(null);
 
   const { data: orders, isLoading } = useQuery<(Order & {
     listingTitle: string;
@@ -73,12 +75,21 @@ export default function OrdersPage() {
         description: "Shipping rates retrieved successfully",
       });
     },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to get rates",
-        description: error.message,
-        variant: "destructive",
-      });
+    onError: (error: any, orderId: string) => {
+      // Check for address validation errors
+      if (error.error === "ADDRESS_VALIDATION_FAILED" && error.addressErrors) {
+        // Store validation errors to show in modal (capture orderId from mutation context)
+        setAddressValidationErrors({
+          addressErrors: error.addressErrors,
+          orderId: orderId,
+        });
+      } else {
+        toast({
+          title: "Failed to get rates",
+          description: error.message || "An error occurred while getting shipping rates",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -460,6 +471,19 @@ export default function OrdersPage() {
           orderId={selectedOrderId}
           open={!!selectedOrderId}
           onOpenChange={(open: boolean) => !open && setSelectedOrderId(null)}
+        />
+
+        {/* Address Validation Modal */}
+        <AddressValidationModal
+          open={!!addressValidationErrors}
+          onOpenChange={(open) => !open && setAddressValidationErrors(null)}
+          addressErrors={addressValidationErrors?.addressErrors || []}
+          onRetry={() => {
+            // User can retry after fixing address in settings
+            if (addressValidationErrors?.orderId) {
+              getRatesMutation.mutate(addressValidationErrors.orderId);
+            }
+          }}
         />
       </div>
     </div>

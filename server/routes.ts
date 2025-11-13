@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
 import { eq, desc, asc, and, or, like, ilike, inArray, sql } from "drizzle-orm";
@@ -4468,6 +4468,39 @@ Output only JSON:
         parcels,
       });
 
+      // Check for address validation errors
+      const addressToValidation = shipment.address_to?.validation_results;
+      const addressFromValidation = shipment.address_from?.validation_results;
+
+      const addressErrors: any[] = [];
+
+      if (addressToValidation && addressToValidation.is_valid === false) {
+        addressErrors.push({
+          type: "ship_to",
+          messages: addressToValidation.messages || [],
+          address: addressTo,
+        });
+      }
+
+      if (addressFromValidation && addressFromValidation.is_valid === false) {
+        addressErrors.push({
+          type: "ship_from",
+          messages: addressFromValidation.messages || [],
+          address: addressFrom,
+        });
+      }
+
+      // If we have address validation errors, return them with proper error code
+      if (addressErrors.length > 0) {
+        console.error("[Rates] Address validation failed:", addressErrors);
+        return res.status(400).json({
+          error: "ADDRESS_VALIDATION_FAILED",
+          message: "One or more addresses failed validation",
+          addressErrors,
+          shipmentId: shipment.object_id,
+        });
+      }
+
       if (!shipment.rates || shipment.rates.length === 0) {
         console.error("[Rates] No rates returned from Shippo:", shipment);
         return res.status(500).json({ 
@@ -4730,7 +4763,7 @@ Output only JSON:
       await db.insert(orderTimelineEvents).values({
         orderId,
         eventType: "label_purchased",
-        note: `Shipping label purchased: ${trackingProvider} ${serviceName} - Tracking: ${transaction.tracking_number} - Cost: $${(actualCostCents / 100).toFixed(2)}`,
+        note: `Shipping label purchased: ${trackingProvider} ${serviceName} - Tracking: ${transaction.tracking_number} - Cost: $${((actualCostCents ?? 0) / 100).toFixed(2)}`,
         metadata: {
           transactionId: transaction.object_id,
           trackingNumber: transaction.tracking_number,
@@ -5075,7 +5108,7 @@ Output only JSON:
       }
 
       // Validate order has a label to void
-      if (!order.shippoLabelId || !order.shippoTransactionId) {
+      if (!order.labelId || !order.shippoTransactionId) {
         return res.status(400).json({ 
           error: "Order does not have a label to void",
           shippingStatus: order.shippingStatus 
@@ -5121,13 +5154,13 @@ Output only JSON:
           .update(orders)
           .set({
             shippingStatus: "unshipped",
-            shippoLabelId: null,
-            shippoLabelUrl: null,
+            labelId: null,
+            labelUrl: null,
             shippoTransactionId: null,
             shippoRateId: null,
             trackingNumber: null,
-            shippoCarrier: null,
-            shippoService: null,
+            carrier: null,
+            serviceLevel: null,
             shippingCostCents: null,
             labelPurchasedAt: null,
             shippedAt: null,
