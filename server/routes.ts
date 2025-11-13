@@ -2148,6 +2148,7 @@ Output only JSON:
                 const [inventoryItem] = await db
                   .insert(inventoryItems)
                   .values({
+                    vineItemId: null,
                     source: "ebay",
                     condition: "New",
                     quantity: ebayOffer.availableQuantity || 1,
