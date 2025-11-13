@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Edit2, Trash2, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
+import { Edit2, Trash2, ExternalLink, RefreshCw, AlertCircle, User, Mail, Hash } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { formatDistanceToNow } from "date-fns";
@@ -75,6 +75,17 @@ export default function ListingsPage() {
   // Fetch all listings
   const { data: listings = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/listings"],
+  });
+
+  // Fetch eBay account information
+  const { data: accountInfo, isLoading: isAccountLoading } = useQuery<{
+    username: string;
+    userId: string;
+    email: string;
+    registrationMarketplace: string;
+    status: string;
+  }>({
+    queryKey: ["/api/ebay/account"],
   });
 
   // Fetch fulfillment policies for dropdown
@@ -135,6 +146,7 @@ export default function ListingsPage() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ebay/account"] });
       if (data.errors && data.errors.length > 0) {
         setSyncErrors(data.errors);
       }
@@ -229,6 +241,53 @@ export default function ListingsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Account Information */}
+      <Card data-testid="card-account-info">
+        <CardContent className="pt-6">
+          {isAccountLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Loading account information...
+            </div>
+          ) : accountInfo ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex items-center gap-2" data-testid="text-account-username">
+                  <User className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Username</span>
+                    <span className="text-sm font-medium">{accountInfo.username}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2" data-testid="text-account-email">
+                  <Mail className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Email</span>
+                    <span className="text-sm font-medium">{accountInfo.email}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2" data-testid="text-account-userid">
+                  <Hash className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">User ID</span>
+                    <span className="text-sm font-medium">{accountInfo.userId}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-2 border-t">
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium">Synced listings:</span> {listings.length}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Unable to load account information
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
