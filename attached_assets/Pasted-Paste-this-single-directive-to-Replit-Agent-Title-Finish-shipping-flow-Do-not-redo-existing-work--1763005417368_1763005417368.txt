@@ -1,0 +1,75 @@
+Paste this single directive to Replit Agent
+
+Title: Finish shipping flow. Do not redo existing work.
+
+Context. What is already done. Do not modify
+
+Orders sync system is live. It runs every 15 minutes, has a Sync now button, and uses eBay as the source of truth with drift detection.
+
+Timeline events storage exists with secure API endpoints.
+
+Listings creation and edit flow works. Health page and fixed size, scrollable diagnostic modals are in place.
+
+Orders page exists. Keep its structure.
+
+Do not change pagination, rate limit backoff, or the sync endpoint.
+
+Problem to solve now
+We still cannot complete shipping end to end. We need rates, label purchase with idempotency, print, confirm shipped to eBay, void within window, reprint without recharging, webhooks to update timelines, and surfacing of errors in the same fixed size, scrollable modal format. Automation first, with manual overrides only when needed.
+
+Implement exactly this and nothing else
+A) Settings
+• Add settings fields if missing: Shippo API key. Ship from address. Parcel presets. Signature required default. Default insurance amount. Auto buy labels flag default off. Auto mark shipped after purchase flag default off.
+
+B) Rates
+• Endpoint POST /api/orders/:id/rates. Use stored buyer address and settings. Return three cheapest rates with carrier, service, cost, ETA and include a full list for the drawer. Persist the chosen rate and append a “Rates quoted” timeline event. If address validation fails, return a structured error for the address correction modal.
+
+C) Buy label with idempotency
+• Endpoint POST /api/orders/:id/buy with {rateToken, insurance, signature}. If a label already exists for this order, return the existing label and tracking. Else purchase through Shippo and persist labelId, labelUrl, trackingNumber, carrier, service, costCents, purchasedAt. Set shippingStatus to Label purchased. Append “Label purchased” to the timeline.
+• If the settings flag Auto buy labels is on, call buy immediately after a successful rates call.
+• Never buy twice for the same order. Idempotency is required.
+
+D) Print and confirm shipped
+• Endpoint GET /api/orders/:id/label returns the saved labelUrl. Printing must never trigger a repurchase.
+• Endpoint POST /api/orders/:id/confirm-shipped posts tracking to eBay. Idempotent. If already posted, return current state. On first post, set shippingStatus to Shipped and append “Tracking posted to eBay” and “Marked shipped.”
+• If settings flag Auto mark shipped after purchase is on, call confirm-shipped immediately after a successful buy.
+
+E) Void and reprint
+• Endpoint POST /api/orders/:id/void-label allowed only within the carrier void window. On success persist refund info, clear labelId and tracking, set shippingStatus back to Unshipped, append “Label voided” and “Refund posted.”
+• Reprint always uses GET /api/orders/:id/label. Never creates a new label.
+
+F) UI wiring on existing Orders page
+• Unshipped tab. Show preselected rate summary, Change options, Get rates, and Buy label if Auto buy is off.
+• Label purchased tab. Show Print label and Confirm shipped.
+• Shipped tab. Show tracking and timeline.
+• Add a timeline drawer per order that shows Synced, Rates quoted, Label purchased, Tracking posted to eBay, Marked shipped, Webhook updates, Voided, Refund posted.
+
+G) Webhooks and alerts
+• Add Shippo webhook for tracking and refunds. Update status and append timeline events for in transit, out for delivery, delivered, exception, refund.
+• Keep the in app alert badge for new paid orders. Also send the simple email you already use when a label becomes ready.
+
+H) Error handling
+• All new errors use the existing fixed width, scrollable modal pattern with full request and response bodies and a Copy all button. Reuse the tracer formatting.
+
+I) Acceptance tests to run now
+
+Create a real paid test order. Sync now. Verify it appears under Unshipped and an alert shows.
+
+Get rates. Change service or insurance. Buy cheapest label. Status becomes Label purchased. Timeline shows Rates quoted and Label purchased.
+
+Print label. Then Confirm shipped. Verify tracking posted to eBay. Status becomes Shipped. Timeline shows both entries.
+
+Call buy again on the same order. Verify the same label is returned and there is no extra charge.
+
+Void a label within the carrier window on a new test order. Verify refund recorded, status returns to Unshipped, timeline shows Voided and Refund posted.
+
+Send Shippo webhooks for in transit and delivered. Verify timeline updates without manual refresh.
+
+Mark a different test order as shipped directly in eBay. Sync. Verify local status flips to Shipped and a drift note is recorded.
+
+Confirm all error modals keep fixed size, scroll correctly, and show full API request and response bodies with Copy all.
+
+Scope guardrails
+• Do not touch the existing orders sync. Do not alter listings creation or edit flows. Do not add bulk reconciliation for external listings. Only write to eBay on confirm-shipped and on listing publish. Use real data in tests.
+
+That is all. Report back only when the above endpoints, UI hooks, and tests pass.

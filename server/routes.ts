@@ -4546,5 +4546,175 @@ Output only JSON:
     }
   });
 
+  // POST /api/orders/:id/buy - Purchase shipping label (idempotent)
+  app.post("/api/orders/:id/buy", async (req: Request, res: Response) => {
+    try {
+      const orderId = req.params.id;
+
+      // Fetch order
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderId, orderId),
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Validate order is in Paid status
+      if (order.status !== "paid") {
+        return res.status(400).json({ 
+          error: "Order must be in Paid status to purchase label",
+          currentStatus: order.status 
+        });
+      }
+
+      // Idempotency: Check if label already purchased
+      if (order.shippoTransactionId && order.labelUrl) {
+        console.log("[Buy] Label already purchased, returning existing label:", order.shippoTransactionId);
+        return res.json({
+          alreadyPurchased: true,
+          labelUrl: order.labelUrl,
+          trackingNumber: order.trackingNumber,
+          trackingProvider: order.trackingProvider,
+          transactionId: order.shippoTransactionId,
+        });
+      }
+
+      // Validate shippoRateId exists (should be set by rates endpoint)
+      if (!order.shippoRateId) {
+        return res.status(400).json({ 
+          error: "Must quote rates first",
+          details: "Call POST /api/orders/:id/rates to quote shipping rates before purchasing label"
+        });
+      }
+
+      console.log("[Buy] Purchasing label with rateId:", order.shippoRateId);
+
+      // Purchase label via Shippo
+      const transaction = await purchaseLabel(order.shippoRateId);
+
+      console.log("[Buy] Shippo transaction response:", {
+        status: transaction.status,
+        objectId: transaction.object_id,
+        trackingNumber: transaction.tracking_number,
+      });
+
+      // Validate transaction response
+      if (transaction.status !== "SUCCESS") {
+        console.error("[Buy] Label purchase failed:", transaction.messages);
+        return res.status(500).json({ 
+          error: "Label purchase failed",
+          shippoError: transaction.messages || [],
+          shippoStatus: transaction.status,
+        });
+      }
+
+      // Validate required fields exist
+      if (!transaction.object_id) {
+        console.error("[Buy] Transaction missing object_id:", transaction);
+        return res.status(500).json({ error: "Invalid transaction: missing ID" });
+      }
+
+      if (!transaction.label_url) {
+        console.error("[Buy] Transaction missing label_url:", transaction);
+        return res.status(500).json({ error: "Invalid transaction: missing label URL" });
+      }
+
+      if (!transaction.tracking_number) {
+        console.error("[Buy] Transaction missing tracking_number:", transaction);
+        return res.status(500).json({ error: "Invalid transaction: missing tracking number" });
+      }
+
+      // Extract actual cost, service, and carrier from transaction
+      const actualRate = transaction.rate;
+      let actualCostCents = order.shippingCostCents; // Fallback to quoted rate
+      let serviceName = order.serviceLevel || "Unknown Service";
+      let trackingProvider = "UPS"; // Default carrier
+      
+      if (actualRate) {
+        // Use actual cost from transaction if available
+        if (actualRate.amount) {
+          const amountFloat = parseFloat(String(actualRate.amount));
+          if (!isNaN(amountFloat) && isFinite(amountFloat) && amountFloat >= 0) {
+            actualCostCents = Math.round(amountFloat * 100);
+          }
+        }
+        
+        // Use actual service name from transaction if available
+        if (actualRate.servicelevel?.name) {
+          serviceName = actualRate.servicelevel.name;
+        } else if (actualRate.servicelevel_name) {
+          serviceName = actualRate.servicelevel_name;
+        }
+        
+        // Use provider from rate (more reliable than tracking_url_provider)
+        if (actualRate.provider) {
+          trackingProvider = actualRate.provider;
+        }
+      }
+      
+      // Fallback to transaction-level tracking provider if rate doesn't have it
+      if (!actualRate?.provider && transaction.tracking_url_provider) {
+        trackingProvider = transaction.tracking_url_provider;
+      }
+
+      // Persist label data with actual cost and service
+      await db
+        .update(orders)
+        .set({
+          shippoTransactionId: transaction.object_id,
+          labelUrl: transaction.label_url,
+          trackingNumber: transaction.tracking_number,
+          trackingProvider,
+          serviceLevel: serviceName,
+          shippingCostCents: actualCostCents,
+          shippingStatus: "label_purchased",
+          labelPurchasedAt: new Date(),
+        })
+        .where(eq(orders.orderId, orderId));
+
+      console.log("[Buy] Persisted label data:", {
+        transactionId: transaction.object_id,
+        trackingNumber: transaction.tracking_number,
+        labelUrl: transaction.label_url,
+        carrier: trackingProvider,
+        service: serviceName,
+        costCents: actualCostCents,
+      });
+
+      // Write timeline event
+      await db.insert(orderTimelineEvents).values({
+        orderId,
+        eventType: "label_purchased",
+        note: `Shipping label purchased: ${trackingProvider} ${serviceName} - Tracking: ${transaction.tracking_number} - Cost: $${(actualCostCents / 100).toFixed(2)}`,
+        metadata: {
+          transactionId: transaction.object_id,
+          trackingNumber: transaction.tracking_number,
+          carrier: trackingProvider,
+          service: serviceName,
+          labelUrl: transaction.label_url,
+          shippingCostCents: actualCostCents,
+        },
+      });
+
+      // Return normalized values that match persisted state
+      res.json({
+        labelUrl: transaction.label_url,
+        trackingNumber: transaction.tracking_number,
+        trackingProvider,                    // Normalized carrier
+        transactionId: transaction.object_id,
+        service: serviceName,                // Normalized service
+        shippingCostCents: actualCostCents,  // Normalized cost
+      });
+
+    } catch (error: any) {
+      console.error("[Buy] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error 
+      });
+    }
+  });
+
   return httpServer;
 }
