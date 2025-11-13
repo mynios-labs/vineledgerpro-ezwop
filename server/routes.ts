@@ -4330,5 +4330,221 @@ Output only JSON:
   // Initialize settings on server start
   initializeDefaultSettings();
 
+  // ============================================================================
+  // Shipping Workflow Routes
+  // ============================================================================
+
+  // POST /api/orders/:id/rates - Get shipping rates for an order
+  app.post("/api/orders/:id/rates", async (req, res) => {
+    try {
+      const { id: orderId } = req.params;
+
+      // Get order
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderId, orderId),
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Validate order is in Paid status
+      if (order.status !== "paid") {
+        return res.status(400).json({ 
+          error: "Order must be in Paid status to quote rates",
+          currentStatus: order.status 
+        });
+      }
+
+      // Validate shipping address exists
+      if (!order.shipToFullAddress) {
+        return res.status(400).json({ error: "Order missing shipping address" });
+      }
+
+      // Get default ship-from address
+      const shipFromProfile = await db.query.addressProfiles.findFirst({
+        where: and(
+          eq(addressProfiles.isDefault, true),
+          eq(addressProfiles.kind, "street_profile")
+        ),
+      });
+
+      if (!shipFromProfile) {
+        return res.status(400).json({ 
+          error: "No default ship-from address configured. Please add a default street address profile." 
+        });
+      }
+
+      // Prepare ship-from address for Shippo
+      const addressFrom = {
+        name: "Ship From", // TODO: Get from business profile
+        street1: shipFromProfile.line1,
+        street2: shipFromProfile.line2 || "",
+        city: shipFromProfile.city,
+        state: shipFromProfile.state,
+        zip: shipFromProfile.zip,
+        country: shipFromProfile.country,
+      };
+
+      // Prepare ship-to address from order
+      const addressTo = {
+        name: order.shipToFullAddress.name,
+        company: order.shipToFullAddress.company || "",
+        street1: order.shipToFullAddress.street1,
+        street2: order.shipToFullAddress.street2 || "",
+        city: order.shipToFullAddress.city,
+        state: order.shipToFullAddress.state,
+        zip: order.shipToFullAddress.postalCode,
+        country: order.shipToFullAddress.country,
+        phone: order.shipToFullAddress.phone || "",
+        email: order.shipToFullAddress.email || "",
+      };
+
+      // Get parcel dimensions from config or use defaults
+      // TODO: Get from item dimensions or config
+      const parcels = [{
+        length: "12",
+        width: "12",
+        height: "6",
+        distance_unit: "in",
+        weight: "2",
+        mass_unit: "lb",
+      }];
+
+      console.log("[Rates] Requesting rates from Shippo:", { 
+        from: addressFrom.city,
+        to: addressTo.city,
+        parcels 
+      });
+
+      // Call Shippo to create shipment and get rates
+      const shipment = await createShipment({
+        addressFrom,
+        addressTo,
+        parcels,
+      });
+
+      if (!shipment.rates || shipment.rates.length === 0) {
+        console.error("[Rates] No rates returned from Shippo:", shipment);
+        return res.status(500).json({ 
+          error: "No shipping rates available",
+          details: shipment.messages || [] 
+        });
+      }
+
+      // Clone and sort rates by price (avoid mutating Shippo's original array)
+      const sortedRates = [...shipment.rates].sort((a: any, b: any) => {
+        const amountA = parseFloat(a.amount);
+        const amountB = parseFloat(b.amount);
+        
+        // Handle invalid amounts by sorting them to the end
+        if (isNaN(amountA)) return 1;
+        if (isNaN(amountB)) return -1;
+        
+        return amountA - amountB;
+      });
+
+      // Validate we have at least one rate
+      if (sortedRates.length === 0) {
+        console.error("[Rates] No valid rates after sorting");
+        return res.status(500).json({ 
+          error: "No shipping rates available after processing",
+          details: shipment.messages || [] 
+        });
+      }
+
+      // Get top 3 cheapest rates (or fewer if less available)
+      const topRates = sortedRates.slice(0, Math.min(3, sortedRates.length));
+
+      // Auto-select and persist the cheapest rate with validation
+      const cheapestRate = sortedRates[0];
+      
+      // Validate rate data
+      if (!cheapestRate.object_id) {
+        console.error("[Rates] Cheapest rate missing object_id:", cheapestRate);
+        return res.status(500).json({ error: "Invalid rate data from Shippo" });
+      }
+
+      const serviceName = cheapestRate.servicelevel?.name || cheapestRate.servicelevel_name || "Unknown Service";
+      const carrierName = cheapestRate.provider || "Unknown Carrier";
+      
+      // Parse and validate amount with explicit type checking
+      if (!cheapestRate.amount || typeof cheapestRate.amount === 'undefined') {
+        console.error("[Rates] Cheapest rate missing amount:", cheapestRate);
+        return res.status(500).json({ error: "Rate missing amount from Shippo" });
+      }
+      
+      const amountFloat = parseFloat(String(cheapestRate.amount));
+      if (isNaN(amountFloat) || amountFloat < 0 || !isFinite(amountFloat)) {
+        console.error("[Rates] Invalid amount in cheapest rate:", cheapestRate.amount);
+        return res.status(500).json({ error: "Invalid rate amount from Shippo" });
+      }
+      
+      const amountCents = Math.round(amountFloat * 100);
+
+      // Persist the validated rate
+      await db
+        .update(orders)
+        .set({
+          shippoRateId: cheapestRate.object_id,
+          serviceLevel: serviceName,
+          shippingCostCents: amountCents,
+        })
+        .where(eq(orders.orderId, orderId));
+
+      console.log("[Rates] Persisted cheapest rate:", {
+        rateId: cheapestRate.object_id,
+        service: serviceName,
+        carrier: carrierName,
+        amountCents,
+      });
+
+      // Write timeline event with validated data
+      await db.insert(orderTimelineEvents).values({
+        orderId,
+        eventType: "rates_quoted",
+        note: `Shipping rates quoted: ${sortedRates.length} option${sortedRates.length === 1 ? '' : 's'} available. Auto-selected ${carrierName} ${serviceName} ($${amountFloat.toFixed(2)})`,
+        metadata: { 
+          shipmentId: shipment.object_id,
+          rateCount: sortedRates.length,
+          selectedRate: {
+            rateId: cheapestRate.object_id,
+            carrier: carrierName,
+            service: serviceName,
+            amountCents,
+            currency: cheapestRate.currency || "USD",
+          }
+        },
+      });
+
+      res.json({
+        shipmentId: shipment.object_id,
+        topRates: topRates.map((rate: any) => ({
+          rateId: rate.object_id,
+          carrier: rate.provider,
+          service: rate.servicelevel?.name || rate.servicelevel_name,
+          amountCents: Math.round(parseFloat(rate.amount) * 100),
+          estimatedDays: rate.estimated_days,
+          currency: rate.currency,
+        })),
+        allRates: sortedRates.map((rate: any) => ({
+          rateId: rate.object_id,
+          carrier: rate.provider,
+          service: rate.servicelevel?.name || rate.servicelevel_name,
+          amountCents: Math.round(parseFloat(rate.amount) * 100),
+          estimatedDays: rate.estimated_days,
+          currency: rate.currency,
+        })),
+      });
+
+    } catch (error: any) {
+      console.error("[Rates] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error 
+      });
+    }
+  });
+
   return httpServer;
 }
