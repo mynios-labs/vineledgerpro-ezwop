@@ -168,6 +168,16 @@ export const orders = pgTable("orders", {
   shippoRateId: text("shippo_rate_id"),
   shippingCostCents: integer("shipping_cost_cents"),
   
+  // eBay order payload (cached for lineItems and fulfillment)
+  ebayOrderJson: json("ebay_order_json").$type<any>(),
+  ebayFulfillmentId: text("ebay_fulfillment_id"),
+  shippedAt: timestamp("shipped_at"),
+  
+  // Shippo transaction data
+  shippoTransactionId: text("shippo_transaction_id"),
+  trackingNumber: text("tracking_number"),
+  trackingProvider: text("tracking_provider"),
+  
   // Drift detection (eBay vs local mismatches)
   driftSnapshot: json("drift_snapshot").$type<Array<{
     detectedAt: string;

@@ -414,6 +414,53 @@ export async function getOrder(orderId: string): Promise<any> {
 let fulfillmentPoliciesCache: any = null;
 let fulfillmentPoliciesCacheExpiry: number = 0;
 
+export async function createShippingFulfillment(params: {
+  orderId: string;
+  lineItems: Array<{ lineItemId: string; quantity: number }>;
+  trackingNumber: string;
+  shippingCarrierCode: string;
+  shippedTime?: string;
+}): Promise<any> {
+  const token = await getAccessToken();
+  
+  const body = {
+    lineItems: params.lineItems,
+    trackingNumber: params.trackingNumber,
+    shippingCarrierCode: params.shippingCarrierCode,
+    shippedTime: params.shippedTime || new Date().toISOString(),
+  };
+
+  console.log("[eBay] Creating shipping fulfillment:", {
+    orderId: params.orderId,
+    trackingNumber: params.trackingNumber,
+    carrier: params.shippingCarrierCode,
+    lineItemCount: params.lineItems.length,
+  });
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/fulfillment/v1/order/${params.orderId}/shipping_fulfillment`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (response.status === 201) {
+    const fulfillmentId = response.headers.get("location");
+    console.log("[eBay] Shipping fulfillment created:", fulfillmentId);
+    return { success: true, fulfillmentId };
+  }
+
+  const errorText = await response.text();
+  console.error(`[eBay] Create shipping fulfillment failed:`, response.status, errorText);
+  throw new Error(`eBay create shipping fulfillment failed: ${response.status} - ${errorText}`);
+}
+
 export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"): Promise<any> {
   // NOTE: Caching disabled per user request to ensure fresh policy data
   console.log("[eBay] Fetching fulfillment policies from Account API (no cache)");

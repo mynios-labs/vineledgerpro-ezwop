@@ -37,8 +37,10 @@ import {
   insertConfigSchema,
 } from "@shared/schema";
 import { openai } from "./lib/openai";
+import { z } from "zod";
 import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
+import { createShippingFulfillment } from "./lib/ebay";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -4709,6 +4711,252 @@ Output only JSON:
 
     } catch (error: any) {
       console.error("[Buy] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error 
+      });
+    }
+  });
+
+  // GET /api/orders/:id/label - Get label URL for printing
+  app.get("/api/orders/:id/label", async (req: Request, res: Response) => {
+    try {
+      const orderId = req.params.id;
+
+      // Fetch order
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderId, orderId),
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Check if label exists
+      if (!order.labelUrl) {
+        return res.status(404).json({ 
+          error: "Label not found",
+          details: "Label has not been purchased yet. Call POST /api/orders/:id/buy first."
+        });
+      }
+
+      res.json({
+        labelUrl: order.labelUrl,
+        trackingNumber: order.trackingNumber,
+        trackingProvider: order.trackingProvider,
+        service: order.serviceLevel,
+        shippingCostCents: order.shippingCostCents,
+        shippingStatus: order.shippingStatus,
+        labelPurchasedAt: order.labelPurchasedAt,
+      });
+
+    } catch (error: any) {
+      console.error("[Get Label] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error 
+      });
+    }
+  });
+
+  // POST /api/orders/:id/confirm-shipped - Post tracking to eBay and mark as shipped (idempotent)
+  app.post("/api/orders/:id/confirm-shipped", async (req: Request, res: Response) => {
+    try {
+      const orderId = req.params.id;
+
+      // Fetch order
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderId, orderId),
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Idempotency: Check if already shipped
+      if (order.shippingStatus === "shipped" && order.ebayFulfillmentId) {
+        console.log("[Confirm Shipped] Already shipped, returning success:", order.ebayFulfillmentId);
+        return res.json({
+          alreadyShipped: true,
+          ebayFulfillmentId: order.ebayFulfillmentId,
+          shippedAt: order.shippedAt,
+        });
+      }
+
+      // Validate label was purchased and all required fields exist
+      if (!order.trackingNumber || !order.trackingProvider || !order.shippoTransactionId) {
+        return res.status(400).json({ 
+          error: "Label must be purchased first with complete tracking data",
+          details: "Call POST /api/orders/:id/buy to purchase shipping label before confirming shipment",
+          missing: {
+            trackingNumber: !order.trackingNumber,
+            trackingProvider: !order.trackingProvider,
+            shippoTransactionId: !order.shippoTransactionId,
+          }
+        });
+      }
+
+      // Validate eBay order ID exists
+      if (!order.ebayOrderId) {
+        return res.status(400).json({ error: "Order missing eBay order ID" });
+      }
+
+      // Get lineItems from cached eBay order or fetch fresh
+      let lineItems: Array<{ lineItemId: string; quantity: number }> = [];
+      let fetchedEbayOrder: any = null;
+      
+      // Safe JSON parsing for ebayOrderJson
+      if (order.ebayOrderJson && typeof order.ebayOrderJson === 'object') {
+        const orderJson = order.ebayOrderJson as any;
+        if (Array.isArray(orderJson.lineItems) && orderJson.lineItems.length > 0) {
+          // Use cached lineItems
+          lineItems = orderJson.lineItems.map((item: any) => ({
+            lineItemId: item.lineItemId,
+            quantity: item.quantity || 1,
+          }));
+          console.log("[Confirm Shipped] Using cached lineItems:", lineItems.length);
+        }
+      }
+      
+      // Fetch fresh if cache missing or invalid
+      if (lineItems.length === 0) {
+        console.log("[Confirm Shipped] No cached lineItems, fetching from eBay");
+        try {
+          fetchedEbayOrder = await getOrder(order.ebayOrderId);
+        } catch (error: any) {
+          console.error("[Confirm Shipped] eBay fetch failed:", error);
+          return res.status(500).json({ 
+            error: "Failed to fetch order from eBay",
+            details: error.message 
+          });
+        }
+        
+        // Validate fetched order structure
+        if (!fetchedEbayOrder || typeof fetchedEbayOrder !== 'object') {
+          return res.status(500).json({ error: "Invalid eBay order response" });
+        }
+        
+        if (!Array.isArray(fetchedEbayOrder.lineItems) || fetchedEbayOrder.lineItems.length === 0) {
+          return res.status(500).json({ 
+            error: "eBay order has no line items",
+            details: "Cannot create fulfillment without line items"
+          });
+        }
+        
+        // Extract lineItems with validation
+        lineItems = fetchedEbayOrder.lineItems
+          .filter((item: any) => item && item.lineItemId)
+          .map((item: any) => ({
+            lineItemId: item.lineItemId,
+            quantity: item.quantity || 1,
+          }));
+        
+        // Final guard: ensure we have valid lineItems
+        if (lineItems.length === 0) {
+          return res.status(500).json({ 
+            error: "No valid line items found in eBay order",
+            details: "All line items missing required lineItemId"
+          });
+        }
+        
+        // Persist validated eBay order for future use
+        await db
+          .update(orders)
+          .set({
+            ebayOrderJson: fetchedEbayOrder,
+          })
+          .where(eq(orders.orderId, orderId));
+        
+        console.log("[Confirm Shipped] Cached eBay order JSON for future use");
+      }
+
+      // Critical safety check: lineItems must exist before calling eBay
+      if (!lineItems || lineItems.length === 0) {
+        return res.status(500).json({ 
+          error: "No line items available for fulfillment",
+          details: "This should never happen - contact support"
+        });
+      }
+
+      // Map carrier code to eBay format
+      const carrierCodeMap: Record<string, string> = {
+        "UPS": "UPS",
+        "USPS": "USPS",
+        "FedEx": "FEDEX",
+        "DHL": "DHL",
+      };
+      
+      const ebayCarrierCode = carrierCodeMap[order.trackingProvider || ""] 
+        || order.trackingProvider?.toUpperCase() 
+        || "UPS";
+
+      console.log("[Confirm Shipped] Posting tracking to eBay:", {
+        orderId: order.ebayOrderId,
+        trackingNumber: order.trackingNumber,
+        carrier: ebayCarrierCode,
+        lineItems: lineItems.length,
+      });
+
+      // Post tracking to eBay
+      const fulfillmentResult = await createShippingFulfillment({
+        orderId: order.ebayOrderId,
+        lineItems,
+        trackingNumber: order.trackingNumber,
+        shippingCarrierCode: ebayCarrierCode,
+      });
+
+      const shippedAtTime = new Date();
+
+      // Update order status
+      await db
+        .update(orders)
+        .set({
+          shippingStatus: "shipped",
+          shippedAt: shippedAtTime,
+          ebayFulfillmentId: fulfillmentResult.fulfillmentId || order.trackingNumber,
+        })
+        .where(eq(orders.orderId, orderId));
+
+      console.log("[Confirm Shipped] Order marked as shipped:", {
+        fulfillmentId: fulfillmentResult.fulfillmentId,
+        shippedAt: shippedAtTime,
+      });
+
+      // Write timeline event: tracking_posted
+      await db.insert(orderTimelineEvents).values({
+        orderId,
+        eventType: "tracking_posted",
+        note: `Tracking posted to eBay: ${order.trackingNumber}`,
+        metadata: {
+          trackingNumber: order.trackingNumber,
+          carrier: ebayCarrierCode,
+          fulfillmentId: fulfillmentResult.fulfillmentId,
+          lineItems: lineItems.length,
+        },
+      });
+
+      // Write timeline event: confirmed_shipped
+      await db.insert(orderTimelineEvents).values({
+        orderId,
+        eventType: "confirmed_shipped",
+        note: `Order marked as shipped. Status: label_purchased → shipped`,
+        metadata: {
+          from: "label_purchased",
+          to: "shipped",
+          shippedAt: shippedAtTime.toISOString(),
+        },
+      });
+
+      res.json({
+        success: true,
+        ebayFulfillmentId: fulfillmentResult.fulfillmentId,
+        shippedAt: shippedAtTime,
+        trackingNumber: order.trackingNumber,
+        carrier: ebayCarrierCode,
+      });
+
+    } catch (error: any) {
+      console.error("[Confirm Shipped] Error:", error);
       res.status(500).json({ 
         error: error.message,
         details: error.response?.data || error 
