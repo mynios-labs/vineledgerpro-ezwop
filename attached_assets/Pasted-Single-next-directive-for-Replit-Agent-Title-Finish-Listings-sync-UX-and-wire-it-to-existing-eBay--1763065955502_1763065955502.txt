@@ -1,0 +1,61 @@
+Single next directive for Replit Agent
+
+Title: Finish Listings sync UX and wire it to existing eBay read paths. Do not touch Orders flow.
+
+Context. Keep as-is
+
+Orders sync, Orders UI, shipping endpoints, and the new timeline system stay exactly as implemented.
+
+Health page and fixed size, scrollable diagnostic modals pattern stay as implemented.
+
+Listing creation and edit flow for app-created listings stays as implemented.
+
+Problem to solve
+The Listings page is missing a clear “Sync now” control, drift visibility, and per-row “Pull fresh.” We must surface eBay as the read source on this page without adding any push or reconciliation editor.
+
+Build exactly this and nothing else
+A) Listings sync controls
+• Add a “Sync now” button to the Listings page header that calls the existing eBay read path to refresh offers for the EBAY_US marketplace.
+• Show “Last synced” timestamp in the header using listings.lastSyncedAt.
+• Add a read-only “Show all from eBay” toggle that includes listings not created by this app.
+
+B) Per-listing actions and drift
+• For every row, add a “Pull fresh” button that re-fetches that single listing from eBay and updates local cache fields only. No push.
+• Surface drift badges if any cached field differs from the latest eBay data: price, quantity, title, category, weight, dimensions, primary image. Use the driftSnapshot already modeled.
+• Add a small details drawer for a row that shows “Local vs eBay” values side-by-side. Read-only.
+
+C) Status and filters
+• Add status chips: Live, Ended, Draft. These are read from eBay status.
+• Add filters: Status, Created by (This app vs External), and Drift (Has drift vs Clean).
+
+D) Endpoints. Reuse and minimally extend
+• If not already present, add:
+– POST /api/listings/sync-from-ebay to refresh the account cache.
+– POST /api/listings/:id/sync-from-ebay to pull one listing.
+• These endpoints must never change local data outside the cached read model. No writes to eBay. No reconciliation.
+• Preserve the existing publish and edit paths for app-created listings. Do not alter them unless a failing test forces a minimal fix.
+
+E) UX and diagnostics
+• Use the same fixed width, scrollable diagnostics modal when a sync call fails. Include full request and response with Copy all.
+
+F) Acceptance tests Replit must run now
+
+Hit “Sync now.” Verify counts update, Last synced updates, and no app-created listings are modified beyond read cache.
+
+Toggle “Show all from eBay.” Verify external listings appear read-only.
+
+For a listing changed directly in eBay, click “Pull fresh” and verify drift badge appears before, clears after pull, and the details drawer shows side-by-side values.
+
+Confirm all error modals keep fixed size, scroll correctly, and include full request and response with Copy all.
+
+Verify that listing publish/edit for app-created listings still works unchanged.
+
+Guardrails
+• Do not add any bulk “push to eBay.”
+• Do not change Orders shipping or timeline code.
+• Use eBay as the read source for Listings. Local DB is cache only.
+• No fake data in tests.
+
+If time remains after the above passes
+• Add a tiny badge on the sidebar “Listings” item that shows count of drifted listings.
+• Add a “Sync on page load if older than 15 minutes” check to the Listings page only.

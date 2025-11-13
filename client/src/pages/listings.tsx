@@ -32,9 +32,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Edit2, Trash2, ExternalLink, RefreshCw } from "lucide-react";
+import { Edit2, Trash2, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { formatDistanceToNow } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -45,6 +46,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { DriftDrawer } from "@/components/drift-drawer";
 
 const editListingSchema = z.object({
   title: z.string().min(10).max(80),
@@ -65,6 +67,10 @@ export default function ListingsPage() {
   const { toast } = useToast();
   const [editingListing, setEditingListing] = useState<any>(null);
   const [deletingListing, setDeletingListing] = useState<any>(null);
+  const [syncErrors, setSyncErrors] = useState<any[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [driftFilter, setDriftFilter] = useState<boolean | null>(null);
+  const [driftDrawerListing, setDriftDrawerListing] = useState<any>(null);
 
   // Fetch all listings
   const { data: listings = [], isLoading } = useQuery<any[]>({
@@ -122,6 +128,76 @@ export default function ListingsPage() {
     },
   });
 
+  // Sync all listings mutation
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/listings/sync-from-ebay", {});
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+      if (data.errors && data.errors.length > 0) {
+        setSyncErrors(data.errors);
+      }
+      toast({
+        title: "Sync complete",
+        description: `Synced ${data.synced} of ${data.total} listings${data.failed > 0 ? ` (${data.failed} failed)` : ""}`,
+        variant: data.failed > 0 ? "destructive" : "default",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Sync failed",
+        description: error.message || "Failed to sync listings",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Sync single listing mutation
+  const syncSingleMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      return await apiRequest("POST", `/api/listings/${listingId}/sync-from-ebay`, {});
+    },
+    onSuccess: (data: any, listingId: string) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+      toast({
+        title: "Listing synced",
+        description: data.drift ? "Drift detected - check listing details" : "Listing is up to date",
+        variant: data.drift ? "default" : "default",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Sync failed",
+        description: error.message || "Failed to sync listing",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Calculate last synced time
+  const lastSyncedAt = listings
+    .filter((l: any) => l.lastSyncedAt)
+    .map((l: any) => new Date(l.lastSyncedAt))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+
+  // Filter listings
+  const filteredListings = listings.filter((listing: any) => {
+    // Status filter
+    if (statusFilter !== "all" && listing.state !== statusFilter) {
+      return false;
+    }
+    
+    // Drift filter
+    if (driftFilter !== null) {
+      const hasDrift = listing.driftSnapshot && Object.keys(listing.driftSnapshot).length > 0;
+      if (driftFilter && !hasDrift) return false;
+      if (!driftFilter && hasDrift) return false;
+    }
+    
+    return true;
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -132,25 +208,179 @@ export default function ListingsPage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">eBay Listings</h1>
-        <p className="text-muted-foreground">Manage your active eBay listings</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">eBay Listings</h1>
+          <p className="text-muted-foreground">Manage your active eBay listings</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lastSyncedAt && (
+            <div className="text-sm text-muted-foreground" data-testid="text-last-synced">
+              Last synced {formatDistanceToNow(lastSyncedAt, { addSuffix: true })}
+            </div>
+          )}
+          <Button
+            onClick={() => syncAllMutation.mutate()}
+            disabled={syncAllMutation.isPending}
+            data-testid="button-sync-all"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
+            Sync now
+          </Button>
+        </div>
       </div>
 
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm font-medium">Status:</Label>
+          <div className="flex items-center gap-1">
+            <Button
+              variant={statusFilter === "all" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilter("all")}
+              data-testid="button-filter-all"
+            >
+              All
+            </Button>
+            <Button
+              variant={statusFilter === "live" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilter("live")}
+              data-testid="button-filter-live"
+            >
+              Live
+            </Button>
+            <Button
+              variant={statusFilter === "ended" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilter("ended")}
+              data-testid="button-filter-ended"
+            >
+              Ended
+            </Button>
+            <Button
+              variant={statusFilter === "draft" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilter("draft")}
+              data-testid="button-filter-draft"
+            >
+              Draft
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Label className="text-sm font-medium">Drift:</Label>
+          <div className="flex items-center gap-1">
+            <Button
+              variant={driftFilter === null ? "default" : "outline"}
+              size="sm"
+              onClick={() => setDriftFilter(null)}
+              data-testid="button-filter-drift-all"
+            >
+              All
+            </Button>
+            <Button
+              variant={driftFilter === true ? "default" : "outline"}
+              size="sm"
+              onClick={() => setDriftFilter(true)}
+              data-testid="button-filter-drift-yes"
+            >
+              Has Drift
+            </Button>
+            <Button
+              variant={driftFilter === false ? "default" : "outline"}
+              size="sm"
+              onClick={() => setDriftFilter(false)}
+              data-testid="button-filter-drift-no"
+            >
+              No Drift
+            </Button>
+          </div>
+        </div>
+
+        <div className="ml-auto text-sm text-muted-foreground" data-testid="text-listing-count">
+          {filteredListings.length} of {listings.length} listings
+        </div>
+      </div>
+
+      {syncErrors.length > 0 && (
+        <Card className="border-destructive" data-testid="card-sync-errors">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-destructive" />
+              <CardTitle className="text-base">Sync Errors</CardTitle>
+            </div>
+            <CardDescription>
+              {syncErrors.length} listing{syncErrors.length > 1 ? 's' : ''} failed to sync
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {syncErrors.map((err: any, idx: number) => (
+                <div key={idx} className="text-sm p-2 rounded bg-muted" data-testid={`text-sync-error-${idx}`}>
+                  <div className="font-medium">{err.listingId}</div>
+                  <div className="text-xs text-muted-foreground">{err.error}</div>
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => setSyncErrors([])}
+              data-testid="button-dismiss-errors"
+            >
+              Dismiss
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {listings?.map((listing: any) => (
+        {filteredListings?.map((listing: any) => (
           <Card key={listing.listingId} data-testid={`card-listing-${listing.listingId}`}>
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <CardTitle className="text-base line-clamp-2">{listing.title}</CardTitle>
-                  <CardDescription className="text-xs mt-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CardTitle className="text-base line-clamp-2">{listing.title}</CardTitle>
+                  </div>
+                  <CardDescription className="text-xs">
                     ${(listing.priceCents / 100).toFixed(2)}
                   </CardDescription>
+                  {listing.driftSnapshot && Object.keys(listing.driftSnapshot).length > 0 && (
+                    <div className="flex items-center gap-1 mt-2">
+                      <Badge
+                        variant="destructive"
+                        className="text-xs cursor-pointer hover-elevate"
+                        onClick={() => setDriftDrawerListing(listing)}
+                        data-testid={`badge-drift-${listing.listingId}`}
+                      >
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        Drift detected
+                      </Badge>
+                    </div>
+                  )}
                 </div>
-                <Badge variant={listing.state === "live" ? "default" : "secondary"}>
-                  {listing.state}
-                </Badge>
+                <div className="flex flex-col gap-1 items-end">
+                  <Badge variant={listing.state === "live" ? "default" : "secondary"}>
+                    {listing.state}
+                  </Badge>
+                  {listing.ebayOfferId && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => syncSingleMutation.mutate(listing.listingId)}
+                      disabled={syncSingleMutation.isPending}
+                      data-testid={`button-pull-fresh-${listing.listingId}`}
+                    >
+                      <RefreshCw className={`w-3 h-3 ${syncSingleMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -216,6 +446,13 @@ export default function ListingsPage() {
           isSubmitting={editMutation.isPending}
         />
       )}
+
+      {/* Drift Details Drawer */}
+      <DriftDrawer
+        listing={driftDrawerListing}
+        open={!!driftDrawerListing}
+        onOpenChange={(open) => !open && setDriftDrawerListing(null)}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deletingListing} onOpenChange={() => setDeletingListing(null)}>

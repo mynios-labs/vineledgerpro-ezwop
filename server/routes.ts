@@ -2028,6 +2028,194 @@ Output only JSON:
     }
   });
 
+  // Zod schema for validating eBay offer data
+  const ebayOfferSchema = z.object({
+    listing: z.object({
+      title: z.string().optional(),
+    }).optional(),
+    pricingSummary: z.object({
+      price: z.object({
+        value: z.string().optional(),
+        currency: z.string().optional(),
+      }).optional(),
+    }).optional(),
+    availableQuantity: z.number().int().nonnegative().optional(),
+    status: z.string().optional(),
+    categoryId: z.string().optional(),
+  });
+
+  // Sync all listings from eBay
+  app.post("/api/listings/sync-from-ebay", async (_req, res) => {
+    const { getOffer } = await import("./lib/ebay");
+    
+    try {
+      // Get all listings that have eBay offer IDs
+      const allListings = await db
+        .select()
+        .from(listings)
+        .where(sql`${listings.ebayOfferId} IS NOT NULL`);
+
+      const syncResults = {
+        total: allListings.length,
+        synced: 0,
+        failed: 0,
+        errors: [] as any[],
+      };
+
+      // Sync each listing
+      for (const listing of allListings) {
+        try {
+          const rawEbayOffer = await getOffer(listing.ebayOfferId!);
+          
+          // Validate eBay response
+          const ebayOffer = ebayOfferSchema.parse(rawEbayOffer);
+          
+          // Extract current eBay values
+          const ebayData = {
+            title: ebayOffer.listing?.title || listing.title,
+            priceCents: (() => {
+              const priceValue = ebayOffer.pricingSummary?.price?.value;
+              // Only parse if we have a valid string or number value
+              if (priceValue === undefined || priceValue === null || priceValue === "") {
+                return listing.priceCents;
+              }
+              const parsed = parseFloat(String(priceValue));
+              if (!Number.isFinite(parsed) || parsed < 0) {
+                console.warn(`[Sync] Invalid price value for listing ${listing.listingId}: ${priceValue}`);
+                return listing.priceCents;
+              }
+              return Math.round(parsed * 100);
+            })(),
+            status: ebayOffer.status || "UNKNOWN",
+            categoryId: ebayOffer.categoryId || listing.categoryId,
+          };
+
+          // Calculate drift
+          const driftSnapshot: Record<string, { local: any; ebay: any }> = {};
+          
+          if (listing.title !== ebayData.title) {
+            driftSnapshot.title = { local: listing.title, ebay: ebayData.title };
+          }
+          if (listing.priceCents !== ebayData.priceCents) {
+            driftSnapshot.priceCents = { local: listing.priceCents, ebay: ebayData.priceCents };
+          }
+          if (listing.categoryId !== ebayData.categoryId) {
+            driftSnapshot.categoryId = { local: listing.categoryId, ebay: ebayData.categoryId };
+          }
+
+          // Update listing with eBay values and drift info
+          await db
+            .update(listings)
+            .set({
+              title: ebayData.title,
+              priceCents: ebayData.priceCents,
+              state: ebayData.status === "PUBLISHED" ? "live" : ebayData.status === "ENDED" ? "ended" : listing.state,
+              driftSnapshot: Object.keys(driftSnapshot).length > 0 ? driftSnapshot : null,
+              lastSyncedAt: new Date(),
+            })
+            .where(eq(listings.listingId, listing.listingId));
+
+          syncResults.synced++;
+        } catch (error: any) {
+          console.error(`[Sync Listings] Failed to sync listing ${listing.listingId}:`, error);
+          syncResults.failed++;
+          syncResults.errors.push({
+            listingId: listing.listingId,
+            error: error.message,
+          });
+        }
+      }
+
+      res.json(syncResults);
+    } catch (error: any) {
+      console.error("[Sync Listings] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Sync single listing from eBay
+  app.post("/api/listings/:id/sync-from-ebay", async (req, res) => {
+    const { getOffer } = await import("./lib/ebay");
+    
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      if (!existingListing.ebayOfferId) {
+        return res.status(400).json({ error: "Listing does not have an eBay offer ID" });
+      }
+
+      // Fetch fresh data from eBay
+      const rawEbayOffer = await getOffer(existingListing.ebayOfferId);
+      
+      // Validate eBay response
+      const ebayOffer = ebayOfferSchema.parse(rawEbayOffer);
+      
+      // Extract current eBay values
+      const ebayData = {
+        title: ebayOffer.listing?.title || existingListing.title,
+        priceCents: (() => {
+          const priceValue = ebayOffer.pricingSummary?.price?.value;
+          // Only parse if we have a valid string or number value
+          if (priceValue === undefined || priceValue === null || priceValue === "") {
+            return existingListing.priceCents;
+          }
+          const parsed = parseFloat(String(priceValue));
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            console.warn(`[Sync] Invalid price value for listing ${existingListing.listingId}: ${priceValue}`);
+            return existingListing.priceCents;
+          }
+          return Math.round(parsed * 100);
+        })(),
+        status: ebayOffer.status || "UNKNOWN",
+        categoryId: ebayOffer.categoryId || existingListing.categoryId,
+      };
+
+      // Calculate drift
+      const driftSnapshot: Record<string, { local: any; ebay: any }> = {};
+      
+      if (existingListing.title !== ebayData.title) {
+        driftSnapshot.title = { local: existingListing.title, ebay: ebayData.title };
+      }
+      if (existingListing.priceCents !== ebayData.priceCents) {
+        driftSnapshot.priceCents = { local: existingListing.priceCents, ebay: ebayData.priceCents };
+      }
+      if (existingListing.categoryId !== ebayData.categoryId) {
+        driftSnapshot.categoryId = { local: existingListing.categoryId, ebay: ebayData.categoryId };
+      }
+
+      // Update listing with eBay values and drift info
+      await db
+        .update(listings)
+        .set({
+          title: ebayData.title,
+          priceCents: ebayData.priceCents,
+          state: ebayData.status === "PUBLISHED" ? "live" : ebayData.status === "ENDED" ? "ended" : existingListing.state,
+          driftSnapshot: Object.keys(driftSnapshot).length > 0 ? driftSnapshot : null,
+          lastSyncedAt: new Date(),
+        })
+        .where(eq(listings.listingId, id));
+
+      res.json({
+        success: true,
+        drift: Object.keys(driftSnapshot).length > 0 ? driftSnapshot : null,
+        ebayData,
+      });
+    } catch (error: any) {
+      console.error("[Sync Single Listing] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get orders stats
   app.get("/api/orders/stats", async (_req, res) => {
     try {
