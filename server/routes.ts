@@ -2386,11 +2386,13 @@ Output only JSON:
           .where(eq(orders.listingId, listing.listingId));
       }
 
-      // Update vine item status back to available
-      await db
-        .update(vineItems)
-        .set({ status: "available" })
-        .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
+      // Update vine item status back to available (only if vineItemId exists)
+      if (inventoryItem.vineItemId) {
+        await db
+          .update(vineItems)
+          .set({ status: "available" })
+          .where(eq(vineItems.vineItemId, inventoryItem.vineItemId));
+      }
 
       // If there was a listing, mark it as ended
       if (listing) {
@@ -3102,14 +3104,16 @@ Output only JSON:
           .set({ status: "refunded" })
           .where(eq(orders.orderId, orderId));
 
-        // Mark the vine item as defective and returned
-        await db.update(vineItems)
-          .set({ 
-            defective: true,
-            defectiveNotes: "Returned by buyer",
-            status: "returned"
-          })
-          .where(eq(vineItems.vineItemId, order.vineItemId));
+        // Mark the vine item as defective and returned (only if vineItemId exists)
+        if (order.vineItemId) {
+          await db.update(vineItems)
+            .set({ 
+              defective: true,
+              defectiveNotes: "Returned by buyer",
+              status: "returned"
+            })
+            .where(eq(vineItems.vineItemId, order.vineItemId));
+        }
 
         // Create return ledger entry to reverse the sale
         await db.insert(accountingLedger).values({

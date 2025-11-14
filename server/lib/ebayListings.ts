@@ -180,7 +180,7 @@ function mergeListings(...groups: UnifiedListing[][]): UnifiedListing[] {
       if (!map.has(key)) map.set(key, x);
     }
   }
-  return [...map.values()];
+  return Array.from(map.values());
 }
 
 export async function fetchAllEbayListings(auth: EbayAuth): Promise<UnifiedListing[]> {
