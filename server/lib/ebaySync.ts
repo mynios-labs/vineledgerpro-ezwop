@@ -126,8 +126,6 @@ async function makeEbayRequest<T>(
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'Content-Language': 'en-US',
-    'Accept-Language': 'en-US',
   };
 
   if (!options.isPublicApi) {

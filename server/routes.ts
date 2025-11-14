@@ -3559,11 +3559,9 @@ Output only JSON:
       // 2. Check user identity
       try {
         const identityResponse = await fetch(`${EBAY_API_BASE}/commerce/identity/v1/user`, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
-            "Accept": "application/json",
-            "Content-Language": "en-US",
-            "Accept-Language": "en-US"
+            "Accept": "application/json"
           }
         });
         
@@ -3602,12 +3600,10 @@ Output only JSON:
       // 3. Check payment policies
       try {
         const paymentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/payment_policy?marketplace_id=EBAY_US`, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-            "Accept": "application/json",
-            "Content-Language": "en-US",
-            "Accept-Language": "en-US"
+            "Accept": "application/json"
           }
         });
         
@@ -3660,12 +3656,10 @@ Output only JSON:
       // 4. Check return policies
       try {
         const returnResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/return_policy?marketplace_id=EBAY_US`, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-            "Accept": "application/json",
-            "Content-Language": "en-US",
-            "Accept-Language": "en-US"
+            "Accept": "application/json"
           }
         });
         
@@ -3718,12 +3712,10 @@ Output only JSON:
       // 5. Check fulfillment policies
       try {
         const fulfillmentResponse = await fetch(`${EBAY_API_BASE}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_US`, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-            "Accept": "application/json",
-            "Content-Language": "en-US",
-            "Accept-Language": "en-US"
+            "Accept": "application/json"
           }
         });
         
