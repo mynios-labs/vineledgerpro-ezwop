@@ -927,15 +927,15 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
   }
 }
 
-export async function getAllOffers(limit: number = 100): Promise<any[]> {
+export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: string; product: any }[]> {
   const token = await getAccessToken();
-  const allOffers: any[] = [];
+  const allItems: { sku: string; product: any }[] = [];
   let offset = 0;
   
-  console.log("[eBay] Fetching all offers from Inventory API...");
+  console.log("[eBay] Fetching all inventory items...");
   
   while (true) {
-    const url = `${EBAY_API_BASE}/sell/inventory/v1/offer?limit=${limit}&offset=${offset}`;
+    const url = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item?limit=${limit}&offset=${offset}`;
     
     const response = await fetch(url, {
       method: "GET",
@@ -949,29 +949,29 @@ export async function getAllOffers(limit: number = 100): Promise<any[]> {
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(`Get all offers failed: ${response.status} - ${JSON.stringify(errorData)}`);
+      throw new Error(`Get inventory items failed: ${response.status} - ${JSON.stringify(errorData)}`);
     }
     
     const data = await response.json();
-    const offers = data.offers || [];
+    const items = data.inventoryItems || [];
     
-    if (offers.length === 0) {
+    if (items.length === 0) {
       break;
     }
     
-    allOffers.push(...offers);
-    console.log(`[eBay] Fetched ${offers.length} offers (offset: ${offset}, total so far: ${allOffers.length})`);
+    allItems.push(...items);
+    console.log(`[eBay] Fetched ${items.length} inventory items (offset: ${offset}, total so far: ${allItems.length})`);
     
     // Check if there are more pages
-    if (!data.next || offers.length < limit) {
+    if (!data.next || items.length < limit) {
       break;
     }
     
     offset += limit;
   }
   
-  console.log(`[eBay] Fetched total of ${allOffers.length} offers`);
-  return allOffers;
+  console.log(`[eBay] Fetched total of ${allItems.length} inventory items`);
+  return allItems;
 }
 
 export async function getListingDetails(itemId: string): Promise<any> {
