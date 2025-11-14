@@ -927,15 +927,18 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
   }
 }
 
-export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: string; product: any }[]> {
+export async function getAllActiveListings(limit: number = 100): Promise<any[]> {
   const token = await getAccessToken();
-  const allItems: { sku: string; product: any }[] = [];
+  const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
+    ? "https://api.ebay.com"
+    : "https://api.sandbox.ebay.com";
+  const allListings: any[] = [];
   let offset = 0;
   
-  console.log("[eBay] Fetching all inventory items...");
+  console.log("[eBay] Fetching all active listings from Listings API...");
   
   while (true) {
-    const url = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item?limit=${limit}&offset=${offset}`;
+    const url = `${EBAY_API_BASE}/sell/listing/v1_beta/item_summary?listing_status=ACTIVE&limit=${limit}&offset=${offset}`;
     
     const response = await fetch(url, {
       method: "GET",
@@ -949,18 +952,18 @@ export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: 
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(`Get inventory items failed: ${response.status} - ${JSON.stringify(errorData)}`);
+      throw new Error(`Get active listings failed: ${response.status} - ${JSON.stringify(errorData)}`);
     }
     
     const data = await response.json();
-    const items = data.inventoryItems || [];
+    const items = data.itemSummaries || [];
     
     if (items.length === 0) {
       break;
     }
     
-    allItems.push(...items);
-    console.log(`[eBay] Fetched ${items.length} inventory items (offset: ${offset}, total so far: ${allItems.length})`);
+    allListings.push(...items);
+    console.log(`[eBay] Fetched ${items.length} active listings (offset: ${offset}, total so far: ${allListings.length})`);
     
     // Check if there are more pages
     if (!data.next || items.length < limit) {
@@ -970,8 +973,8 @@ export async function getAllInventoryItems(limit: number = 100): Promise<{ sku: 
     offset += limit;
   }
   
-  console.log(`[eBay] Fetched total of ${allItems.length} inventory items`);
-  return allItems;
+  console.log(`[eBay] Fetched total of ${allListings.length} active listings`);
+  return allListings;
 }
 
 export async function getListingDetails(itemId: string): Promise<any> {
