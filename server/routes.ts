@@ -38,10 +38,11 @@ import {
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { z } from "zod";
-import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies } from "./lib/ebay";
+import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies, getAccessToken } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { createShippingFulfillment } from "./lib/ebay";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
+import { fetchAllEbayListings } from "./lib/ebayListings";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -2046,178 +2047,94 @@ Output only JSON:
 
   // Sync all listings from eBay
   app.post("/api/listings/sync-from-ebay", async (_req, res) => {
-    const { getAllOffers } = await import("./lib/ebay");
-    
     try {
-      console.log("[Sync Listings] Starting full sync from eBay Inventory API...");
+      const token = await getAccessToken();
+      const auth = { accessToken: token, marketplaceId: "EBAY_US" };
       
-      // Step 1: Fetch all offers from eBay Inventory API
-      const offers = await getAllOffers();
-      console.log(`[Sync Listings] Found ${offers.length} offers on eBay`);
+      console.log("[Sync Listings] Starting full sync using comprehensive fetcher...");
+      const ebayListings = await fetchAllEbayListings(auth);
       
-      const syncResults = {
-        total: offers.length,
-        synced: 0,
-        created: 0,
-        updated: 0,
-        unchanged: 0,
-        failed: 0,
-        errors: [] as any[],
-        api: "inventory.offers",
-        fallbackUsed: false,
-      };
+      let created = 0;
+      let updated = 0;
+      let unchanged = 0;
 
-      // Step 2: Process each offer
-      for (const offer of offers) {
-        try {
-          const offerId = offer.offerId;
-          const sku = offer.sku;
-          const status = offer.status;
-          const quantity = offer.availableQuantity || 0;
-          
-          // Safely access offer.listing (may be undefined for drafts/paused)
-          const listing = offer.listing || {};
-          const ebayItemId = listing.listingId || null;
-          const title = listing.title || offer.sku || "Untitled";
-          const categoryId = listing.categoryId || offer.categoryId || "";
-          
-          // Parse price safely
-          const priceValue = offer.pricingSummary?.price?.value;
-          const priceCents = priceValue ? Math.round(parseFloat(priceValue) * 100) : 0;
-          
-          // Map status to state
-          let state: string;
-          if (status === "PUBLISHED") {
-            state = "live";
-          } else if (status === "ENDED" || status === "INACTIVE") {
-            state = "ended";
-          } else {
-            state = "draft";
-          }
-          
-          const publishedAt = listing.startDate ? new Date(listing.startDate) : null;
-          
-          console.log(`[Sync Listings] Processing offer ${offerId} (SKU: ${sku}, itemId: ${ebayItemId || 'none'}, status: ${status})`);
-          
-          // Find existing listing by ebayItemId (if present) or by SKU
-          let existingListing = null;
-          if (ebayItemId) {
-            [existingListing] = await db
-              .select()
-              .from(listings)
-              .where(eq(listings.ebayItemId, ebayItemId));
-          }
-          
-          // If not found by itemId, try by SKU and offerId
-          if (!existingListing && sku) {
-            [existingListing] = await db
-              .select()
-              .from(listings)
-              .where(eq(listings.ebayOfferId, offerId));
-          }
-          
-          if (existingListing) {
-            // Update existing listing
-            const hadChanges = 
-              existingListing.title !== title ||
-              existingListing.priceCents !== priceCents ||
-              existingListing.state !== state;
-            
+      for (const l of ebayListings) {
+        const key = l.itemId || l.sku;
+        if (!key) continue;
+
+        const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
+        const title = l.title || l.sku || "Untitled";
+        
+        // Find existing listing by itemId or sku
+        let existing = null;
+        if (l.itemId) {
+          [existing] = await db
+            .select()
+            .from(listings)
+            .where(eq(listings.ebayItemId, l.itemId));
+        }
+        if (!existing && l.sku) {
+          [existing] = await db
+            .select()
+            .from(listings)
+            .where(eq(listings.ebaySku, l.sku));
+        }
+
+        if (!existing) {
+          // Create new inventory item
+          const [newInventory] = await db
+            .insert(inventoryItems)
+            .values({
+              vineItemId: null,
+              source: "ebay",
+              condition: "New",
+              quantity: l.quantity || 1,
+              privacyPassed: true,
+            })
+            .returning();
+
+          // Create new listing
+          await db.insert(listings).values({
+            inventoryId: newInventory.inventoryId,
+            title,
+            description: "",
+            priceCents,
+            state: l.status,
+            ebayItemId: l.itemId,
+            ebaySku: l.sku,
+            ebayOfferId: l.offerId,
+            lastSyncedAt: new Date(),
+          });
+          created++;
+        } else {
+          // Check for changes
+          const changed = 
+            existing.title !== title ||
+            existing.priceCents !== priceCents ||
+            existing.state !== l.status;
+
+          if (changed) {
             await db
               .update(listings)
               .set({
                 title,
                 priceCents,
-                state,
-                categoryId,
-                ebayItemId: ebayItemId || existingListing.ebayItemId,
-                ebayStatus: status,
-                publishedAt: publishedAt || existingListing.publishedAt,
+                state: l.status,
                 lastSyncedAt: new Date(),
               })
-              .where(eq(listings.listingId, existingListing.listingId));
-
-            if (hadChanges) {
-              syncResults.updated++;
-              console.log(`[Sync Listings] Updated listing ${existingListing.listingId}`);
-            } else {
-              syncResults.unchanged++;
-            }
-            syncResults.synced++;
+              .where(eq(listings.listingId, existing.listingId));
+            updated++;
           } else {
-            // Find or create inventory item
-            let inventoryId: string | null = null;
-            
-            // Try to find existing inventory by SKU
-            if (sku) {
-              const [existingInventory] = await db
-                .select()
-                .from(inventoryItems)
-                .innerJoin(listings, eq(listings.inventoryId, inventoryItems.inventoryId))
-                .where(eq(listings.ebaySku, sku))
-                .limit(1);
-              
-              if (existingInventory) {
-                inventoryId = existingInventory.inventoryItems.inventoryId;
-              }
-            }
-            
-            // If no inventory found, create stub
-            if (!inventoryId) {
-              const [newInventory] = await db
-                .insert(inventoryItems)
-                .values({
-                  vineItemId: null,
-                  source: "ebay",
-                  condition: "New",
-                  quantity,
-                  privacyPassed: true,
-                })
-                .returning();
-              inventoryId = newInventory.inventoryId;
-            }
-            
-            // Create new listing
-            await db.insert(listings).values({
-              inventoryId,
-              title,
-              description: "",
-              priceCents,
-              state,
-              categoryId,
-              ebayOfferId: offerId,
-              ebayItemId,
-              ebaySku: sku || null,
-              ebayStatus: status,
-              publishedAt,
-              lastSyncedAt: new Date(),
-            });
-
-            syncResults.created++;
-            syncResults.synced++;
-            console.log(`[Sync Listings] Created listing for offer ${offerId}`);
+            unchanged++;
           }
-        } catch (error: any) {
-          console.error(`[Sync Listings] Failed to process offer ${offer.offerId}:`, error);
-          syncResults.failed++;
-          
-          const errorMsg = error.message || String(error);
-          const errorPreview = errorMsg.length > 300 ? errorMsg.substring(0, 300) + '...' : errorMsg;
-          
-          syncResults.errors.push({
-            offerId: offer.offerId,
-            sku: offer.sku,
-            status: error.status || 'unknown',
-            error: errorPreview,
-          });
         }
       }
 
-      console.log(`ListingsSync created=${syncResults.created} updated=${syncResults.updated} unchanged=${syncResults.unchanged} failed=${syncResults.failed} total=${syncResults.total} api="${syncResults.api}" fallbackUsed=${syncResults.fallbackUsed}`);
-      res.json(syncResults);
-    } catch (error: any) {
-      console.error("[Sync Listings] Error:", error);
-      res.status(500).json({ error: error.message });
+      console.log(`ListingsSync created=${created} updated=${updated} unchanged=${unchanged} total=${created + updated + unchanged}`);
+      res.json({ count: ebayListings.length, created, updated, unchanged });
+    } catch (e: any) {
+      console.error("[Sync Listings] Error:", e);
+      res.status(500).json({ error: e.message || "sync failed" });
     }
   });
 
