@@ -1,0 +1,89 @@
+You are getting a 400 from eBay because the Inventory API is rejecting your Accept-Language header. eBay Sell APIs want BCP-47 values like en-US, and the header is optional. The fastest fix is to drop the header entirely for Sell calls, keep only X-EBAY-C-MARKETPLACE-ID: EBAY_US, and retry. You also need to guarantee source: "ebay" on every row you upsert so the UI never hits undefined again.
+
+Here is a clean Agent prompt that applies exactly those fixes, keeps your three-path fetcher, and proves both listings render.
+
+Replit Agent, fix Listings Sync and prove 2 eBay items appear
+
+Header fix for Sell APIs
+
+Open server/lib/ebayListings.ts.
+
+In fetchJSON, remove any Accept-Language header. Keep only:
+
+const headers = {
+  Authorization: `Bearer ${auth.accessToken}`,
+  Accept: "application/json",
+  "Content-Type": "application/json",
+  "X-EBAY-C-MARKETPLACE-ID": auth.marketplaceId || "EBAY_US",
+};
+
+
+Do not add Accept-Language anywhere in Sell calls. Trading XML call stays as is.
+
+Harden the route and mapping
+
+Open server/routes.ts. In /api/listings/sync-from-ebay:
+
+Call fetchAllEbayListings(auth) exactly once.
+
+For each record, build a safe row. Always include source: "ebay", never undefined.
+
+Use itemId if present, else sku, as the stable key. Price in cents if available.
+
+Upsert without creating placeholders. If nothing changed, count as unchanged.
+
+Log a single line:
+console.log(\ListingsSync created=${created} updated=${updated} unchanged=${unchanged} total=${created+updated+unchanged}`)`
+
+Sample mapping to adapt to your Drizzle schema:
+
+const priceCents = l.price != null ? Math.round(l.price * 100) : null;
+await db
+  .insert(inventoryItems)
+  .values({
+    ebayItemId: l.itemId ?? null,
+    sku: l.sku ?? null,
+    title: l.title ?? null,
+    priceCents,
+    source: "ebay",
+    state: l.status, // "live" | "ended" | "draft"
+    vineItemId: null,
+  })
+  .onConflictDoUpdate({
+    target: [inventoryItems.ebayItemId], // if null, switch to sku target
+    set: {
+      title: l.title ?? null,
+      priceCents,
+      state: l.status,
+      source: "ebay",
+    },
+  });
+
+
+Important: if ebayItemId is null but sku exists, use a second upsert path keyed on sku.
+
+Guard all fetchers from header issues
+
+In fetchSellListingsV1 and fetchInventoryOffers, do not set Accept-Language. Keep X-EBAY-C-MARKETPLACE-ID.
+
+Leave Trading XML fetch unchanged. No language header there.
+
+Retry policy
+
+Keep your 429 backoff as written. No change, just verify it is used by Inventory and Listings v1 calls.
+
+UI and test
+
+Ensure the Listings page “Sync now” button calls POST /api/listings/sync-from-ebay, then refetches the grid query.
+
+Click “Sync now”.
+
+In server logs verify the single line: ListingsSync created=… updated=… unchanged=… total=…
+
+Confirm the grid shows both eBay items, including the one created directly on eBay.
+
+Fail-safe
+
+If eBay returns any 400 with header text, include the first 200 chars of the response body in the error toast, and continue processing any pages already fetched.
+
+Report back with the log line and a screenshot of the Listings page showing both items.

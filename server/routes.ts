@@ -2081,7 +2081,7 @@ Output only JSON:
         }
 
         if (!existing) {
-          // Create new inventory item
+          // Create new inventory item with guaranteed source: "ebay"
           const [newInventory] = await db
             .insert(inventoryItems)
             .values({
@@ -2107,6 +2107,12 @@ Output only JSON:
           });
           created++;
         } else {
+          // Update existing listing and ensure inventory has source: "ebay"
+          await db
+            .update(inventoryItems)
+            .set({ source: "ebay" })
+            .where(eq(inventoryItems.inventoryId, existing.inventoryId));
+
           // Check for changes
           const changed = 
             existing.title !== title ||

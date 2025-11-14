@@ -22,8 +22,7 @@ async function fetchJSON(url: string, auth: EbayAuth, init: RequestInit = {}, re
     "Authorization": `Bearer ${auth.accessToken}`,
     "Accept": "application/json",
     "Content-Type": "application/json",
-    "X-EBAY-C-MARKETPLACE-ID": auth.marketplaceId,
-    ...(init.headers || {})
+    "X-EBAY-C-MARKETPLACE-ID": auth.marketplaceId || "EBAY_US",
   };
   const res = await fetch(url, { ...init, headers });
   if (res.status === 429 && retries > 0) {
