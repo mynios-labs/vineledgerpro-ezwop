@@ -2051,96 +2051,136 @@ Output only JSON:
       const token = await getAccessToken();
       const auth = { accessToken: token, marketplaceId: "EBAY_US" };
       
-      console.log("[Sync Listings] Starting full sync using comprehensive fetcher...");
+      console.log("[Sync Listings] Starting full sync...");
       const ebayListings = await fetchAllEbayListings(auth);
+      console.log(`[Sync Listings] Fetched ${ebayListings.length} listings from eBay`);
       
       let created = 0;
       let updated = 0;
       let unchanged = 0;
+      const errors: any[] = [];
 
       for (const l of ebayListings) {
-        const key = l.itemId || l.sku;
-        if (!key) continue;
-
-        const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
-        const title = l.title || l.sku || "Untitled";
-        
-        // Find existing listing by itemId or sku
-        let existing = null;
-        if (l.itemId) {
-          [existing] = await db
-            .select()
-            .from(listings)
-            .where(eq(listings.ebayItemId, l.itemId));
-        }
-        if (!existing && l.sku) {
-          [existing] = await db
-            .select()
-            .from(listings)
-            .where(eq(listings.ebaySku, l.sku));
-        }
-
-        if (!existing) {
-          // Create new inventory item with guaranteed source: "ebay"
-          const [newInventory] = await db
-            .insert(inventoryItems)
-            .values({
-              vineItemId: null,
-              source: "ebay",
-              condition: "New",
-              quantity: l.quantity || 1,
-              privacyPassed: true,
-            })
-            .returning();
-
-          // Create new listing
-          await db.insert(listings).values({
-            inventoryId: newInventory.inventoryId,
-            title,
-            description: "",
-            priceCents,
-            state: l.status,
-            ebayItemId: l.itemId,
-            ebaySku: l.sku,
-            ebayOfferId: l.offerId,
-            lastSyncedAt: new Date(),
-          });
-          created++;
-        } else {
-          // Update existing listing and ensure inventory has source: "ebay"
-          await db
-            .update(inventoryItems)
-            .set({ source: "ebay" })
-            .where(eq(inventoryItems.inventoryId, existing.inventoryId));
-
-          // Check for changes
-          const changed = 
-            existing.title !== title ||
-            existing.priceCents !== priceCents ||
-            existing.state !== l.status;
-
-          if (changed) {
-            await db
-              .update(listings)
-              .set({
-                title,
-                priceCents,
-                state: l.status,
-                lastSyncedAt: new Date(),
-              })
-              .where(eq(listings.listingId, existing.listingId));
-            updated++;
-          } else {
-            unchanged++;
+        try {
+          const key = l.itemId || l.sku;
+          if (!key) {
+            console.warn("[Sync Listings] Skipping listing with no itemId or SKU:", l);
+            continue;
           }
+
+          const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
+          const title = l.title || l.sku || "Untitled";
+          
+          // Find existing listing by itemId or sku
+          let existing = null;
+          if (l.itemId) {
+            [existing] = await db
+              .select()
+              .from(listings)
+              .where(eq(listings.ebayItemId, l.itemId));
+          }
+          if (!existing && l.sku) {
+            [existing] = await db
+              .select()
+              .from(listings)
+              .where(eq(listings.ebaySku, l.sku));
+          }
+
+          if (!existing) {
+            // Create new inventory item with guaranteed source: "ebay"
+            const [newInventory] = await db
+              .insert(inventoryItems)
+              .values({
+                vineItemId: null,
+                source: "ebay",
+                condition: "New",
+                quantity: l.quantity || 1,
+                privacyPassed: true,
+              })
+              .returning();
+
+            // Create new listing
+            await db.insert(listings).values({
+              inventoryId: newInventory.inventoryId,
+              title,
+              description: l.raw?.description || "",
+              priceCents,
+              state: l.status,
+              ebayItemId: l.itemId,
+              ebaySku: l.sku,
+              ebayOfferId: l.offerId,
+              lastSyncedAt: new Date(),
+            });
+            created++;
+            console.log(`[Sync Listings] Created listing: ${title} (${key})`);
+          } else {
+            // Update existing listing and ensure inventory has source: "ebay"
+            await db
+              .update(inventoryItems)
+              .set({ source: "ebay" })
+              .where(eq(inventoryItems.inventoryId, existing.inventoryId));
+
+            // Check for changes
+            const changed = 
+              existing.title !== title ||
+              existing.priceCents !== priceCents ||
+              existing.state !== l.status;
+
+            if (changed) {
+              await db
+                .update(listings)
+                .set({
+                  title,
+                  priceCents,
+                  state: l.status,
+                  lastSyncedAt: new Date(),
+                })
+                .where(eq(listings.listingId, existing.listingId));
+              updated++;
+              console.log(`[Sync Listings] Updated listing: ${title} (${key})`);
+            } else {
+              unchanged++;
+            }
+          }
+        } catch (itemError: any) {
+          const key = l.itemId || l.sku || 'unknown';
+          console.error(`[Sync Listings] Error processing listing ${key}:`, itemError);
+          errors.push({
+            itemId: l.itemId,
+            sku: l.sku,
+            error: itemError.message,
+          });
         }
       }
 
-      console.log(`ListingsSync created=${created} updated=${updated} unchanged=${unchanged} total=${created + updated + unchanged}`);
-      res.json({ count: ebayListings.length, created, updated, unchanged });
+      const summary = {
+        total: ebayListings.length,
+        created,
+        updated,
+        unchanged,
+        failed: errors.length,
+        errors: errors.length > 0 ? errors : undefined,
+      };
+
+      console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length} total=${ebayListings.length}`);
+      
+      res.json(summary);
     } catch (e: any) {
-      console.error("[Sync Listings] Error:", e);
-      res.status(500).json({ error: e.message || "sync failed" });
+      console.error("[Sync Listings] Fatal error:", e);
+      const errorMessage = e.message || "sync failed";
+      
+      // Provide helpful error messages
+      if (errorMessage.includes("Accept-Language")) {
+        res.status(500).json({ 
+          error: "eBay API configuration error. Accept-Language header issue detected. Please check server logs." 
+        });
+      } else if (errorMessage.includes("401") || errorMessage.includes("Unauthorized")) {
+        res.status(401).json({ 
+          error: "eBay authentication failed. Please re-authorize the app." 
+        });
+      } else {
+        res.status(500).json({ error: errorMessage });
+      }
     }
   });
 

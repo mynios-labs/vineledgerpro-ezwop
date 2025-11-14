@@ -1,0 +1,234 @@
+I've thoroughly analyzed the eBay listing synchronization code. Here's what I found:
+
+Root Cause: Accept-Language Header Issue
+The error in your screenshot shows:
+
+eBay 400 Bad Request: errorId 25700 - "Invalid value for header Accept-Language"
+The Problem: eBay's Inventory API recently became stricter about the Accept-Language header. While your server/lib/ebayListings.ts file was fixed to remove it, server/lib/ebay.ts still has Accept-Language: en-US in many places (lines 208, 233, 266, 300, 339, 477, 506, 536, 591, 654, 701, 749, 793, 843, 892).
+
+Secondary Issues Found:
+Missing Error Handling - The sync doesn't gracefully handle partial failures
+Pagination Logic - Could fail if eBay returns exactly the limit
+Data Mapping Inconsistencies - Some listings might have missing fields
+No Validation - Doesn't check if SKU or Item ID actually exists before upserting
+PROMPT FOR REPLIT AGENT
+Copy and paste this entire prompt into Replit Agent:
+
+Title: Fix eBay Listing Sync - Remove Accept-Language Headers and Improve Error Handling
+
+Context: The app is failing to sync eBay listings with error: eBay 400 Bad Request: errorId 25700 - "Invalid value for header Accept-Language". eBay's Inventory API now rejects the Accept-Language header we're sending.
+
+Required Changes:
+
+1. Fix Accept-Language Headers in server/lib/ebay.ts
+Remove ALL "Accept-Language": "en-US" headers from every function in this file. Keep only:
+
+Authorization
+Content-Type
+Accept
+Content-Language (when needed)
+X-EBAY-C-MARKETPLACE-ID (when needed)
+Functions to fix:
+
+createOrUpdateInventoryItem (line ~207-209)
+createOffer (line ~232-234)
+publishOffer (line ~265-267)
+getOrCreateMerchantLocation (line ~300, 339)
+getFulfillmentPolicies (line ~477)
+getPaymentPolicies (line ~506)
+getReturnPolicies (line ~536)
+getOffersBySku (line ~591)
+getOffer (line ~654)
+updateOffer (line ~701)
+withdrawOffer (line ~749)
+createOfferTraced (line ~793)
+publishOfferTraced (line ~843)
+createOrUpdateInventoryItemTraced (line ~892)
+getAllOffers (line ~945)
+getUserAccountInfo (line ~991)
+Example Fix:
+
+// BEFORE (WRONG):
+headers: {
+  Authorization: `Bearer ${token}`,
+  "Content-Type": "application/json",
+  "Content-Language": "en-US",
+  "Accept-Language": "en-US",  // ❌ REMOVE THIS LINE
+},
+
+// AFTER (CORRECT):
+headers: {
+  Authorization: `Bearer ${token}`,
+  "Content-Type": "application/json",
+  "Content-Language": "en-US",
+},
+2. Verify server/lib/ebayListings.ts is Correct
+Confirm that fetchJSON function does NOT include Accept-Language. It should look like:
+
+const headers = {
+  "Authorization": `Bearer ${auth.accessToken}`,
+  "Accept": "application/json",
+  "Content-Type": "application/json",
+  "X-EBAY-C-MARKETPLACE-ID": auth.marketplaceId || "EBAY_US",
+};
+3. Improve Error Handling in server/routes.ts
+In the /api/listings/sync-from-ebay route (around line 2048), wrap the sync logic with better error handling:
+
+app.post("/api/listings/sync-from-ebay", async (_req, res) => {
+  try {
+    const token = await getAccessToken();
+    const auth = { accessToken: token, marketplaceId: "EBAY_US" };
+    
+    console.log("[Sync Listings] Starting full sync...");
+    const ebayListings = await fetchAllEbayListings(auth);
+    console.log(`[Sync Listings] Fetched ${ebayListings.length} listings from eBay`);
+    
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    const errors: any[] = [];
+
+    for (const l of ebayListings) {
+      try {
+        const key = l.itemId || l.sku;
+        if (!key) {
+          console.warn("[Sync Listings] Skipping listing with no itemId or SKU:", l);
+          continue;
+        }
+
+        const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
+        const title = l.title || l.sku || "Untitled";
+        
+        // Find existing listing by itemId or sku
+        let existing = null;
+        if (l.itemId) {
+          [existing] = await db
+            .select()
+            .from(listings)
+            .where(eq(listings.ebayItemId, l.itemId));
+        }
+        if (!existing && l.sku) {
+          [existing] = await db
+            .select()
+            .from(listings)
+            .where(eq(listings.ebaySku, l.sku));
+        }
+
+        if (!existing) {
+          // Create new inventory item with guaranteed source: "ebay"
+          const [newInventory] = await db
+            .insert(inventoryItems)
+            .values({
+              vineItemId: null,
+              source: "ebay",
+              condition: "New",
+              quantity: l.quantity || 1,
+              privacyPassed: true,
+            })
+            .returning();
+
+          // Create new listing
+          await db.insert(listings).values({
+            inventoryId: newInventory.inventoryId,
+            title,
+            description: l.raw?.description || "",
+            priceCents,
+            state: l.status,
+            ebayItemId: l.itemId,
+            ebaySku: l.sku,
+            ebayOfferId: l.offerId,
+            lastSyncedAt: new Date(),
+          });
+          created++;
+          console.log(`[Sync Listings] Created listing: ${title} (${key})`);
+        } else {
+          // Update existing listing and ensure inventory has source: "ebay"
+          await db
+            .update(inventoryItems)
+            .set({ source: "ebay" })
+            .where(eq(inventoryItems.inventoryId, existing.inventoryId));
+
+          // Check for changes
+          const changed = 
+            existing.title !== title ||
+            existing.priceCents !== priceCents ||
+            existing.state !== l.status;
+
+          if (changed) {
+            await db
+              .update(listings)
+              .set({
+                title,
+                priceCents,
+                state: l.status,
+                lastSyncedAt: new Date(),
+              })
+              .where(eq(listings.listingId, existing.listingId));
+            updated++;
+            console.log(`[Sync Listings] Updated listing: ${title} (${key})`);
+          } else {
+            unchanged++;
+          }
+        }
+      } catch (itemError: any) {
+        const key = l.itemId || l.sku || 'unknown';
+        console.error(`[Sync Listings] Error processing listing ${key}:`, itemError);
+        errors.push({
+          itemId: l.itemId,
+          sku: l.sku,
+          error: itemError.message,
+        });
+      }
+    }
+
+    const summary = {
+      total: ebayListings.length,
+      created,
+      updated,
+      unchanged,
+      failed: errors.length,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+
+    console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length} total=${ebayListings.length}`);
+    
+    res.json(summary);
+  } catch (e: any) {
+    console.error("[Sync Listings] Fatal error:", e);
+    const errorMessage = e.message || "sync failed";
+    
+    // Provide helpful error messages
+    if (errorMessage.includes("Accept-Language")) {
+      res.status(500).json({ 
+        error: "eBay API configuration error. Accept-Language header issue detected. Please check server logs." 
+      });
+    } else if (errorMessage.includes("401") || errorMessage.includes("Unauthorized")) {
+      res.status(401).json({ 
+        error: "eBay authentication failed. Please re-authorize the app." 
+      });
+    } else {
+      res.status(500).json({ error: errorMessage });
+    }
+  }
+});
+4. Testing Steps
+After making these changes:
+
+Restart the Replit server to ensure all changes are loaded
+Open the browser console (F12) and click "Sync now" on the Listings page
+Check the server logs for the summary line:
+[Sync Listings] Complete: created=X updated=Y unchanged=Z failed=0 total=N
+Verify that ALL your eBay listings (including those created directly on eBay) appear in the app
+Confirm no "undefined source" errors in the UI
+5. Success Criteria
+✅ No 400 errors from eBay about Accept-Language
+✅ All eBay listings sync successfully
+✅ Listings created directly on eBay website appear in the app
+✅ Console logs show: created=X updated=Y unchanged=Z failed=0
+✅ No undefined source errors in the UI
+Important Notes:
+
+Do NOT change any Orders or shipping code
+Do NOT modify the database schema
+Keep all existing eBay policy fetching logic intact
+Only remove the problematic Accept-Language headers

@@ -205,7 +205,6 @@ export async function createOrUpdateInventoryItem(sku: string, item: any): Promi
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US", // Required for Inventory API
       },
       body: JSON.stringify(item),
     }
@@ -230,7 +229,6 @@ export async function createOffer(offer: any): Promise<any> {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US", // Required for Inventory API
     },
     body: JSON.stringify(offer),
   });
@@ -263,7 +261,6 @@ export async function publishOffer(offerId: string): Promise<any> {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US", // Required for Inventory API
       },
     }
   );
@@ -297,7 +294,6 @@ export async function getOrCreateMerchantLocation(): Promise<string> {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
-          "Accept-Language": "en-US",
         },
       }
     );
@@ -336,7 +332,6 @@ export async function getOrCreateMerchantLocation(): Promise<string> {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US",
       },
       body: JSON.stringify(locationData),
     }
@@ -474,7 +469,6 @@ export async function getFulfillmentPolicies(marketplaceId: string = "EBAY_US"):
         "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
         "Accept": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US",
       },
     }
   );
@@ -503,7 +497,6 @@ export async function getPaymentPolicies(marketplaceId: string = "EBAY_US"): Pro
         "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
         "Accept": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US",
       },
     }
   );
@@ -532,7 +525,6 @@ export async function getReturnPolicies(marketplaceId: string = "EBAY_US"): Prom
         "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
         "Accept": "application/json",
         "Content-Language": "en-US",
-        "Accept-Language": "en-US",
       },
     }
   );
@@ -588,7 +580,6 @@ export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Accept-Language": "en-US",
     },
   };
 
@@ -651,7 +642,6 @@ export async function getOffer(offerId: string, tracer?: ApiTracer): Promise<any
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Accept-Language": "en-US",
     },
   };
 
@@ -698,7 +688,6 @@ export async function updateOffer(offerId: string, offer: any, tracer?: ApiTrace
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US",
     },
     body: JSON.stringify(offer),
   };
@@ -746,7 +735,6 @@ export async function withdrawOffer(offerId: string, tracer?: ApiTracer): Promis
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US",
     },
   };
 
@@ -790,7 +778,6 @@ export async function createOfferTraced(offer: any, tracer?: ApiTracer): Promise
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US",
     },
     body: JSON.stringify(offer),
   };
@@ -840,7 +827,6 @@ export async function publishOfferTraced(offerId: string, tracer?: ApiTracer): P
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US",
     },
   };
 
@@ -889,7 +875,6 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Content-Language": "en-US",
-      "Accept-Language": "en-US",
     },
     body: JSON.stringify(item),
   };
@@ -942,7 +927,6 @@ export async function getAllOffers(limit: number = 200): Promise<any[]> {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Accept-Language": "en-US",
         "Content-Language": "en-US",
       },
     });
@@ -988,7 +972,6 @@ export async function getUserAccountInfo(): Promise<any> {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Accept-Language": "en-US",
       "Content-Language": "en-US",
     },
   });
