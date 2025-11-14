@@ -1,0 +1,100 @@
+Directive to Replit Agent: Fix Listings Sync Now
+Guardrails
+
+Do not fabricate records. Do not insert placeholder listings. Only show what eBay returns.
+
+Keep Orders work intact. Do not change any shipping or orders code.
+
+Keep the existing listings UI. Only fix the data source and mapping.
+
+API source of truth
+
+Use Sell Inventory API → getOffers as the primary source for active listings.
+
+Endpoint: GET /sell/inventory/v1/offer?marketplace_id=EBAY_US&limit=200&offset=0
+
+Handle pagination with offset until offers.length < limit.
+
+Required OAuth scopes include sell.inventory.readonly or sell.inventory.
+
+Many web-created listings still have Inventory offers behind the scenes. If some active items do not appear in getOffers, add a fallback call:
+
+Fallback endpoint: GET /sell/listing/v1/item_summary/search?q=owner&limit=200&offset=0 only if our credentials actually have access. If it returns 404 or not authorized, skip the fallback and log a single warning. Do not break sync.
+
+For every offer:
+
+Expect that offer.listing can be missing for drafts or paused listings. Guard all reads.
+
+For PUBLISHED offers, offer.listing.listingId is the eBay item ID. Save it.
+
+Map availableQuantity, price.value, format, marketplaceId, sku, and status.
+
+Mapping and defaults that fix today’s crash
+
+The current crash is "Cannot read properties of undefined (reading 'source')".
+
+Make source a computed field. If the local row exists and has a local origin, set "local". Otherwise set "ebay". Never leave source undefined.
+
+Do not require vineItemId on insert. Explicitly insert vineItemId: null when absent.
+
+When offer.listing is undefined, set:
+
+ebayItemId: null
+
+state: "draft" or "ended" based on offer.status mapping
+
+publishedAt: null
+
+When offer.listing exists:
+
+ebayItemId = offer.listing.listingId
+
+state = "live" if offer.status === "PUBLISHED" else "ended" as appropriate
+
+publishedAt = offer.listing.startDate if present
+
+Database upsert
+
+Upsert on ebayItemId when present, otherwise on sku + marketplaceId.
+
+Never create a new local inventory row solely to satisfy an insert. If the record cannot be matched and has no ebayItemId, store it as a listing row with source: "ebay" and nullable local fields.
+
+UI and button behavior
+
+The “Sync now” button on Listings must call POST /api/listings/sync-from-ebay.
+
+Show a toast with counts: {created, updated, unchanged, failed}.
+
+Show a dismissible “Sync Errors” panel listing each failed item with the raw error message.
+
+Do not show drift badges until we have both a local copy and the eBay copy to compare. No local copy means no drift.
+
+Tests Replit must run before saying done
+
+With the account that currently shows 2 active listings in Seller Hub, click Sync now on the Listings page.
+
+Expect the grid to show exactly 2 cards, each with the correct Item ID, price, and status “live”.
+
+Temporarily set one listing to draft or end it on eBay. Run Sync now.
+
+Expect the card to update to “ended” or “draft” within the app.
+
+Simulate a missing offer.listing in API response using the agent’s test harness.
+
+Confirm no crash. The listing appears with state not live, ebayItemId null, and source: "ebay".
+
+Logging and diagnostics
+
+On every sync batch, log a single line: ListingsSync {created, updated, unchanged, failed, total, api: "inventory.offers", fallbackUsed: true|false}.
+
+On each failure, capture offerId or sku, HTTP status, and the first 300 chars of the response body. Expose via the error panel’s “Copy all”.
+
+Absolutely do not
+
+Do not insert fake inventory items to “make counts match”.
+
+Do not switch endpoints again without proving the response contains our two real listings.
+
+Do not regress Orders or the new shipping UI.
+
+When this is done, click the Listings page Sync now, verify 2 live items display, and paste the exact sync log line into the chat.

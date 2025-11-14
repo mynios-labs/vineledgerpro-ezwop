@@ -927,18 +927,15 @@ export async function createOrUpdateInventoryItemTraced(sku: string, item: any, 
   }
 }
 
-export async function getAllActiveListings(limit: number = 100): Promise<any[]> {
+export async function getAllOffers(limit: number = 200): Promise<any[]> {
   const token = await getAccessToken();
-  const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
-    ? "https://api.ebay.com"
-    : "https://api.sandbox.ebay.com";
-  const allListings: any[] = [];
+  const allOffers: any[] = [];
   let offset = 0;
   
-  console.log("[eBay] Fetching all active listings from Listings API...");
+  console.log("[eBay] Fetching all offers from Inventory API...");
   
   while (true) {
-    const url = `${EBAY_API_BASE}/sell/listing/v1_beta/item_summary?listing_status=ACTIVE&limit=${limit}&offset=${offset}`;
+    const url = `${EBAY_API_BASE}/sell/inventory/v1/offer?marketplace_id=EBAY_US&limit=${limit}&offset=${offset}`;
     
     const response = await fetch(url, {
       method: "GET",
@@ -952,55 +949,29 @@ export async function getAllActiveListings(limit: number = 100): Promise<any[]> 
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(`Get active listings failed: ${response.status} - ${JSON.stringify(errorData)}`);
+      throw new Error(`Get offers failed: ${response.status} - ${JSON.stringify(errorData)}`);
     }
     
     const data = await response.json();
-    const items = data.itemSummaries || [];
+    const offers = data.offers || [];
     
-    if (items.length === 0) {
+    if (offers.length === 0) {
       break;
     }
     
-    allListings.push(...items);
-    console.log(`[eBay] Fetched ${items.length} active listings (offset: ${offset}, total so far: ${allListings.length})`);
+    allOffers.push(...offers);
+    console.log(`[eBay] Fetched ${offers.length} offers (offset: ${offset}, total so far: ${allOffers.length})`);
     
     // Check if there are more pages
-    if (!data.next || items.length < limit) {
+    if (offers.length < limit) {
       break;
     }
     
     offset += limit;
   }
   
-  console.log(`[eBay] Fetched total of ${allListings.length} active listings`);
-  return allListings;
-}
-
-export async function getListingDetails(itemId: string): Promise<any> {
-  const token = await getAccessToken();
-  const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
-    ? "https://api.ebay.com"
-    : "https://api.sandbox.ebay.com";
-    
-  const url = `${EBAY_API_BASE}/sell/listing/v1_beta/item/${itemId}`;
-  
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "Accept-Language": "en-US",
-      "Content-Language": "en-US",
-    },
-  });
-  
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`Get listing details failed for ${itemId}: ${response.status} - ${JSON.stringify(errorData)}`);
-  }
-  
-  return response.json();
+  console.log(`[eBay] Fetched total of ${allOffers.length} offers`);
+  return allOffers;
 }
 
 export async function getUserAccountInfo(): Promise<any> {
