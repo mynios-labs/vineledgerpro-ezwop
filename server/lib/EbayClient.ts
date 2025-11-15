@@ -120,13 +120,11 @@ export class EbayClient {
       ? endpoint 
       : `${EBAY_API_BASE}${endpoint}`;
 
-    // Build headers - CENTRALIZED HEADER LOGIC
+    // Build headers - CENTRALIZED HEADER LOGIC (NO Accept-Language or Content-Language!)
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.token}`,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Content-Language': 'en-US',
-      // NO Accept-Language!
       ...customHeaders,
     };
 
