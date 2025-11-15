@@ -43,6 +43,7 @@ import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransa
 import { createShippingFulfillment } from "./lib/ebay";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 import { fetchAllEbayListings } from "./lib/ebayListings";
+import { ebayClient } from "./lib/EbayClient";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -2045,142 +2046,97 @@ Output only JSON:
     categoryId: z.string().optional(),
   });
 
-  // Sync all listings from eBay
+  // Sync all listings from eBay using centralized EbayClient
   app.post("/api/listings/sync-from-ebay", async (_req, res) => {
     try {
-      const token = await getAccessToken();
-      const auth = { accessToken: token, marketplaceId: "EBAY_US" };
-      
-      console.log("[Sync Listings] Starting full sync...");
-      const ebayListings = await fetchAllEbayListings(auth);
-      console.log(`[Sync Listings] Fetched ${ebayListings.length} listings from eBay`);
+      console.log("[Sync Listings] Starting sync...");
       
       let created = 0;
       let updated = 0;
       let unchanged = 0;
       const errors: any[] = [];
 
-      for (const l of ebayListings) {
-        try {
-          const key = l.itemId || l.sku;
-          if (!key) {
-            console.warn("[Sync Listings] Skipping listing with no itemId or SKU:", l);
-            continue;
-          }
+      // Use the centralized client with async generator
+      for await (const offerBatch of ebayClient.getAllOffers()) {
+        for (const offer of offerBatch) {
+          try {
+            const sku = offer.sku;
+            const itemId = offer.listing?.listingId || null;
+            const title = offer.listing?.title || sku || "Untitled";
+            const priceCents = offer.pricingSummary?.price?.value 
+              ? Math.round(parseFloat(offer.pricingSummary.price.value) * 100) 
+              : 0;
+            
+            // Map status to state
+            let state: 'live' | 'draft' | 'ended' = 'draft';
+            if (offer.status === 'PUBLISHED') state = 'live';
+            else if (offer.status === 'ENDED') state = 'ended';
 
-          const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
-          const title = l.title || l.sku || "Untitled";
-          
-          // Find existing listing by itemId or sku
-          let existing = null;
-          if (l.itemId) {
-            [existing] = await db
-              .select()
-              .from(listings)
-              .where(eq(listings.ebayItemId, l.itemId));
-          }
-          if (!existing && l.sku) {
-            [existing] = await db
-              .select()
-              .from(listings)
-              .where(eq(listings.ebaySku, l.sku));
-          }
+            // Find existing listing
+            let existing = null;
+            if (itemId) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebayItemId, itemId));
+            }
+            if (!existing && sku) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebaySku, sku));
+            }
 
-          if (!existing) {
-            // Create new inventory item with guaranteed source: "ebay"
-            const [newInventory] = await db
-              .insert(inventoryItems)
-              .values({
+            if (!existing) {
+              // Create new inventory and listing
+              const [newInventory] = await db.insert(inventoryItems).values({
                 vineItemId: null,
                 source: "ebay",
                 condition: "New",
-                quantity: l.quantity || 1,
+                quantity: offer.availableQuantity || 1,
                 privacyPassed: true,
-              })
-              .returning();
+              }).returning();
 
-            // Create new listing
-            await db.insert(listings).values({
-              inventoryId: newInventory.inventoryId,
-              title,
-              description: l.raw?.description || "",
-              priceCents,
-              state: l.status,
-              ebayItemId: l.itemId,
-              ebaySku: l.sku,
-              ebayOfferId: l.offerId,
-              lastSyncedAt: new Date(),
-            });
-            created++;
-            console.log(`[Sync Listings] Created listing: ${title} (${key})`);
-          } else {
-            // Update existing listing and ensure inventory has source: "ebay"
-            await db
-              .update(inventoryItems)
-              .set({ source: "ebay" })
-              .where(eq(inventoryItems.inventoryId, existing.inventoryId));
+              await db.insert(listings).values({
+                inventoryId: newInventory.inventoryId,
+                title,
+                description: "",
+                priceCents,
+                state,
+                ebayItemId: itemId,
+                ebaySku: sku,
+                ebayOfferId: offer.offerId,
+                lastSyncedAt: new Date(),
+              });
+              created++;
+              console.log(`[Sync Listings] Created: ${title} (${itemId || sku})`);
+            } else {
+              // Update existing - ensure source is "ebay"
+              await db.update(inventoryItems)
+                .set({ source: "ebay" })
+                .where(eq(inventoryItems.inventoryId, existing.inventoryId));
 
-            // Check for changes
-            const changed = 
-              existing.title !== title ||
-              existing.priceCents !== priceCents ||
-              existing.state !== l.status;
-
-            if (changed) {
-              await db
-                .update(listings)
-                .set({
+              const changed = existing.title !== title || existing.priceCents !== priceCents || existing.state !== state;
+              
+              if (changed) {
+                await db.update(listings).set({
                   title,
                   priceCents,
-                  state: l.status,
+                  state,
                   lastSyncedAt: new Date(),
-                })
-                .where(eq(listings.listingId, existing.listingId));
-              updated++;
-              console.log(`[Sync Listings] Updated listing: ${title} (${key})`);
-            } else {
-              unchanged++;
+                }).where(eq(listings.listingId, existing.listingId));
+                updated++;
+                console.log(`[Sync Listings] Updated: ${title} (${itemId || sku})`);
+              } else {
+                unchanged++;
+              }
             }
+          } catch (itemError: any) {
+            errors.push({ sku: offer.sku, error: itemError.message });
           }
-        } catch (itemError: any) {
-          const key = l.itemId || l.sku || 'unknown';
-          console.error(`[Sync Listings] Error processing listing ${key}:`, itemError);
-          errors.push({
-            itemId: l.itemId,
-            sku: l.sku,
-            error: itemError.message,
-          });
         }
       }
 
-      const summary = {
-        total: ebayListings.length,
-        created,
-        updated,
-        unchanged,
-        failed: errors.length,
-        errors: errors.length > 0 ? errors : undefined,
-      };
-
-      console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length} total=${ebayListings.length}`);
+      console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length}`);
       
-      res.json(summary);
+      res.json({ created, updated, unchanged, failed: errors.length, errors });
     } catch (e: any) {
       console.error("[Sync Listings] Fatal error:", e);
-      const errorMessage = e.message || "sync failed";
-      
-      // Provide helpful error messages
-      if (errorMessage.includes("Accept-Language")) {
-        res.status(500).json({ 
-          error: "eBay API configuration error. Accept-Language header issue detected. Please check server logs." 
-        });
-      } else if (errorMessage.includes("401") || errorMessage.includes("Unauthorized")) {
-        res.status(401).json({ 
-          error: "eBay authentication failed. Please re-authorize the app." 
-        });
-      } else {
-        res.status(500).json({ error: errorMessage });
-      }
+      res.status(500).json({ error: e.message });
     }
   });
 
