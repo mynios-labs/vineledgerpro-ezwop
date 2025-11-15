@@ -11,6 +11,17 @@ Preferred communication style: Simple, everyday language.
 ### UI/UX Decisions
 The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives) and Tailwind CSS. The design is inspired by modern business applications like Linear and Stripe Dashboard, emphasizing clarity, data visibility, error prevention, and workflow efficiency. Key pages include Inventory, Draft Listing creation, Orders, Messages & Returns, Money & Ledger, and a Health dashboard.
 
+### Critical eBay API Configuration
+**IMPORTANT**: eBay Sell APIs reject Accept-Language and Content-Language headers with specific values. Node.js fetch automatically injects these headers with values eBay rejects, causing 400 errors.
+
+**Solution**: Explicitly set these headers to empty strings in all eBay API requests:
+```typescript
+headersObj.set('Accept-Language', '');
+headersObj.set('Content-Language', '');
+```
+
+This overrides fetch's automatic injection and prevents 400 "Invalid value for header Accept-Language" errors.
+
 ### Technical Implementations
 
 #### Frontend

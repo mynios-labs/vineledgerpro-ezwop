@@ -73,13 +73,49 @@ export interface EbayOrder {
   orderPaymentStatus: string;
   pricingSummary: {
     total: { value: string; currency: string; };
+    deliveryCost?: { value: string; currency: string; };
+    tax?: { value: string; currency: string; };
   };
-  buyer: { username: string; };
+  buyer: { 
+    username: string;
+    buyerRegistrationAddress?: {
+      fullName?: string;
+      contactAddress?: {
+        addressLine1?: string;
+        addressLine2?: string;
+        city?: string;
+        stateOrProvince?: string;
+        postalCode?: string;
+        countryCode?: string;
+      };
+    };
+  };
   lineItems: Array<{
-    lineItemId: string;
+    lineItemId?: string;
+    legacyItemId?: string;
     sku: string;
     title: string;
     quantity: number;
+  }>;
+  paidTime?: string;
+  fulfillmentStartInstructions?: Array<{
+    ebaySupportedFulfillment?: boolean;
+    shippingStep?: {
+      shipTo?: {
+        fullName?: string;
+        contactAddress?: {
+          addressLine1?: string;
+          addressLine2?: string;
+          city?: string;
+          stateOrProvince?: string;
+          postalCode?: string;
+          countryCode?: string;
+        };
+        primaryPhone?: {
+          phoneNumber?: string;
+        };
+      };
+    };
   }>;
 }
 
@@ -120,22 +156,31 @@ export class EbayClient {
       ? endpoint 
       : `${EBAY_API_BASE}${endpoint}`;
 
-    // Build headers - CENTRALIZED HEADER LOGIC (NO Accept-Language or Content-Language!)
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      ...customHeaders,
-    };
+    // Build headers - CENTRALIZED HEADER LOGIC
+    // Use Headers object and explicitly set/block problematic headers
+    const headersObj = new Headers();
+    headersObj.set('Authorization', `Bearer ${this.token}`);
+    headersObj.set('Content-Type', 'application/json');
+    headersObj.set('Accept', 'application/json');
+    
+    // Explicitly set Accept-Language to empty to override fetch's automatic injection
+    // eBay rejects the default value that Node.js fetch adds
+    headersObj.set('Accept-Language', '');
+    headersObj.set('Content-Language', '');
 
     // Add marketplace header for endpoints that need it
     if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
-      headers['X-EBAY-C-MARKETPLACE-ID'] = MARKETPLACE_ID;
+      headersObj.set('X-EBAY-C-MARKETPLACE-ID', MARKETPLACE_ID);
+    }
+
+    // Add custom headers if provided
+    for (const [key, value] of Object.entries(customHeaders)) {
+      headersObj.set(key, value);
     }
 
     const fetchOptions: RequestInit = {
       method,
-      headers,
+      headers: headersObj,
       body: body ? JSON.stringify(body) : undefined,
     };
 
@@ -318,7 +363,7 @@ export class EbayClient {
   // ============================================================================
 
   /**
-   * Get all orders (paginated)
+   * Get all orders (paginated async generator)
    */
   async *getAllOrders(since?: Date): AsyncGenerator<EbayOrder[]> {
     const sinceDate = since || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);

@@ -38,9 +38,8 @@ import {
 } from "@shared/schema";
 import { openai } from "./lib/openai";
 import { z } from "zod";
-import { getSuggestedCategories, isLeafCategory, createOrUpdateInventoryItem, createOffer, publishOffer, getOrders, getOrder, getOrCreateMerchantLocation, getFulfillmentPolicies, getAccessToken } from "./lib/ebay";
+import { getAccessToken } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
-import { createShippingFulfillment } from "./lib/ebay";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 import { fetchAllEbayListings } from "./lib/ebayListings";
 import { ebayClient } from "./lib/EbayClient";
@@ -767,11 +766,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Step 1: Try eBay category suggestions with original title
       try {
-        const categories = await getSuggestedCategories(item.titleNorm);
+        const categories = await ebayClient.getSuggestedCategories(item.titleNorm);
         if (categories.categorySuggestions && categories.categorySuggestions.length > 0) {
           // Find first leaf category in the results
           for (const cat of categories.categorySuggestions) {
-            const isLeaf = await isLeafCategory(cat.category.categoryId);
+            const isLeaf = await ebayClient.isLeafCategory(cat.category.categoryId);
             if (isLeaf) {
               suggestedCategory = cat;
               console.log("[AI Generation] Found leaf category from eBay:", cat.category);
@@ -817,10 +816,10 @@ Output ONLY this JSON (no markdown):
             console.log("[AI Generation] AI-generated keywords:", keywordData.keywords);
             
             // Try eBay again with AI-generated keywords
-            const categories = await getSuggestedCategories(keywordData.keywords);
+            const categories = await ebayClient.getSuggestedCategories(keywordData.keywords);
             if (categories.categorySuggestions && categories.categorySuggestions.length > 0) {
               for (const cat of categories.categorySuggestions) {
-                const isLeaf = await isLeafCategory(cat.category.categoryId);
+                const isLeaf = await ebayClient.isLeafCategory(cat.category.categoryId);
                 if (isLeaf) {
                   suggestedCategory = cat;
                   console.log("[AI Generation] Found leaf category with AI keywords:", cat.category);
@@ -1037,7 +1036,7 @@ Output only JSON:
         return res.json([]);
       }
 
-      const categories = await getSuggestedCategories(q);
+      const categories = await ebayClient.getSuggestedCategories(q);
       
       if (!categories.categorySuggestions || categories.categorySuggestions.length === 0) {
         return res.json([]);
@@ -1056,7 +1055,7 @@ Output only JSON:
         if (leafCheckCache.has(catId)) {
           isLeaf = leafCheckCache.get(catId)!;
         } else {
-          isLeaf = await isLeafCategory(catId);
+          isLeaf = await ebayClient.isLeafCategory(catId);
           leafCheckCache.set(catId, isLeaf);
         }
 
@@ -1084,7 +1083,7 @@ Output only JSON:
   app.get("/api/ebay/fulfillment-policies", async (req, res) => {
     try {
       const marketplaceId = (req.query.marketplace_id as string) || "EBAY_US";
-      const policies = await getFulfillmentPolicies(marketplaceId);
+      const policies = await ebayClient.getFulfillmentPolicies(marketplaceId);
       
       res.json(policies.fulfillmentPolicies || []);
     } catch (error: any) {
@@ -1377,13 +1376,13 @@ Output only JSON:
       await createOrUpdateInventoryItemTraced(sku, inventoryItemPayload, tracer);
 
       // Get or create merchant location
-      const merchantLocationKey = await getOrCreateMerchantLocation();
+      const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
 
       // Fetch and validate all 3 required business policies
       const { getFulfillmentPolicies, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
       
       // Validate fulfillment policy (user-selected)
-      const fulfillmentPoliciesData = await getFulfillmentPolicies("EBAY_US");
+      const fulfillmentPoliciesData = await ebayClient.getFulfillmentPolicies("EBAY_US");
       const validFulfillmentPolicy = fulfillmentPoliciesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
       
       if (!validFulfillmentPolicy) {
@@ -1890,7 +1889,7 @@ Output only JSON:
 
         // Get merchant location and policies
         const { getOrCreateMerchantLocation, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
-        const merchantLocationKey = await getOrCreateMerchantLocation();
+        const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
         
         const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
         const selectedPaymentPolicy = selectBestPolicy(
@@ -2418,27 +2417,15 @@ Output only JSON:
       const { daysBack = 30 } = req.body;
       
       // Calculate date range for syncing
-      const creationDateFrom = new Date();
-      creationDateFrom.setDate(creationDateFrom.getDate() - daysBack);
-      const fromDate = creationDateFrom.toISOString();
-
-      // Fetch orders from eBay
-      const ebayResponse = await getOrders({
-        creationDateFrom: fromDate,
-        limit: 200,
-      });
-
-      if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
-        return res.json({ 
-          synced: 0, 
-          message: "No new orders found" 
-        });
-      }
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - daysBack);
 
       let syncedCount = 0;
       let updatedCount = 0;
 
-      for (const ebayOrder of ebayResponse.orders) {
+      // Stream all orders using async generator
+      for await (const orderBatch of ebayClient.getAllOrders(fromDate)) {
+        for (const ebayOrder of orderBatch) {
         try {
           // Wrap each order sync in a transaction for atomicity
           await db.transaction(async (tx) => {
@@ -2611,6 +2598,7 @@ Output only JSON:
           console.error(`Failed to sync order ${ebayOrder.orderId}:`, error);
           // Continue with next order instead of failing the entire sync
         }
+        }
       }
 
       res.json({ 
@@ -2661,29 +2649,12 @@ Output only JSON:
       let updatedCount = 0;
       let shippedDetectedCount = 0;
       const changedOrderIds: string[] = [];
-      let hasMore = true;
-      let offset = 0;
-      const limit = 100;
-      let retryCount = 0;
-      const MAX_RETRIES = 3;
 
-      // Pagination loop with retry logic
-      while (hasMore) {
-        try {
-          // Fetch orders from eBay with pagination
-          const ebayResponse = await getOrders({
-            creationDateFrom: fromDate,
-            limit,
-            offset,
-          });
-
-          if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          // Process each order
-          for (const ebayOrder of ebayResponse.orders) {
+      // Stream all orders using async generator (handles pagination automatically)
+      try {
+        for await (const orderBatch of ebayClient.getAllOrders(syncStartDate)) {
+          // Process each order in the batch
+          for (const ebayOrder of orderBatch) {
             try {
               // Process order in transaction for atomicity
               await db.transaction(async (tx) => {
@@ -2853,41 +2824,10 @@ Output only JSON:
               // Continue with next order
             }
           }
-
-          // Check if there are more pages
-          // eBay returns fewer orders than limit when we've reached the end
-          if (ebayResponse.orders.length < limit) {
-            hasMore = false;
-          } else {
-            offset += limit;
-            // Additional check: eBay may include 'total' field to verify
-            if (ebayResponse.total && offset >= ebayResponse.total) {
-              hasMore = false;
-            }
-          }
-
-          // Reset retry count on successful page
-          retryCount = 0;
-
-        } catch (error: any) {
-          // Handle 429 rate limiting with exponential backoff
-          if (error.message?.includes('429') || error.message?.includes('Too Many Requests')) {
-            retryCount++;
-            
-            if (retryCount >= MAX_RETRIES) {
-              console.error('[Orders Sync] Max retries reached for rate limiting');
-              throw new Error('eBay API rate limit exceeded - max retries reached');
-            }
-
-            const backoffMs = Math.min(1000 * Math.pow(2, retryCount), 10000);
-            console.log(`[Orders Sync] Rate limited, retrying in ${backoffMs}ms (attempt ${retryCount}/${MAX_RETRIES})`);
-            
-            await new Promise(resolve => setTimeout(resolve, backoffMs));
-            continue; // Retry the same page
-          }
-
-          throw error; // Re-throw non-429 errors
         }
+      } catch (error: any) {
+        console.error('[Orders Sync] Fatal error during sync:', error);
+        throw error;
       }
 
       const syncedCount = createdCount + updatedCount;
@@ -3845,25 +3785,11 @@ Output only JSON:
       let createdCount = 0;
       let updatedCount = 0;
       let shippedDetectedCount = 0;
-      let offset = 0;
-      const limit = 100;
-      let hasMore = true;
 
-      // Pagination loop with drift detection
-      while (hasMore) {
-        const ebayResponse = await getOrders({
-          creationDateFrom: fromDate,
-          limit,
-          offset,
-        });
-
-        if (!ebayResponse.orders || ebayResponse.orders.length === 0) {
-          hasMore = false;
-          break;
-        }
-
+      // Stream all orders using async generator (handles pagination automatically)
+      for await (const orderBatch of ebayClient.getAllOrders(syncStartDate)) {
         // Process each order with drift detection (matching manual sync endpoint logic)
-        for (const ebayOrder of ebayResponse.orders) {
+        for (const ebayOrder of orderBatch) {
           try {
             await db.transaction(async (tx) => {
               const lineItem = ebayOrder.lineItems?.[0];
@@ -4012,16 +3938,6 @@ Output only JSON:
             });
           } catch (error: any) {
             console.error(`[Auto-Sync] Failed to sync order ${ebayOrder.orderId}:`, error);
-          }
-        }
-
-        // Check pagination
-        if (ebayResponse.orders.length < limit) {
-          hasMore = false;
-        } else {
-          offset += limit;
-          if (ebayResponse.total && offset >= ebayResponse.total) {
-            hasMore = false;
           }
         }
       }
@@ -5143,7 +5059,7 @@ Output only JSON:
       if (lineItems.length === 0) {
         console.log("[Confirm Shipped] Fetching from eBay");
         try {
-          const fetchedEbayOrder = await getOrder(order.ebayOrderId);
+          const fetchedEbayOrder = await ebayClient.getOrder(order.ebayOrderId);
           const parseResult = ebayOrderSchema.safeParse(fetchedEbayOrder);
           
           if (!parseResult.success) {
@@ -5234,7 +5150,7 @@ Output only JSON:
       });
 
       // Post tracking to eBay FIRST (compensation pattern - outside transaction)
-      const fulfillmentResult = await createShippingFulfillment({
+      const fulfillmentResult = await ebayClient.createShippingFulfillment({
         orderId: order.ebayOrderId,
         lineItems,
         trackingNumber: order.trackingNumber,
