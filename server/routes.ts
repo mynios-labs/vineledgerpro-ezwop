@@ -2141,8 +2141,6 @@ Output only JSON:
 
   // Sync single listing from eBay
   app.post("/api/listings/:id/sync-from-ebay", async (req, res) => {
-    const { getOffer } = await import("./lib/ebay");
-    
     try {
       const { id } = req.params;
 
@@ -2160,8 +2158,8 @@ Output only JSON:
         return res.status(400).json({ error: "Listing does not have an eBay offer ID" });
       }
 
-      // Fetch fresh data from eBay
-      const rawEbayOffer = await getOffer(existingListing.ebayOfferId);
+      // Fetch fresh data from eBay using centralized client
+      const rawEbayOffer = await ebayClient.getOffer(existingListing.ebayOfferId);
       
       // Validate eBay response
       const ebayOffer = ebayOfferSchema.parse(rawEbayOffer);
