@@ -183,13 +183,7 @@ export class EbayClient {
       body: body ? JSON.stringify(body) : undefined,
     };
 
-    // Debug: Log headers being sent
-    const debugHeaders: Record<string, string> = {};
-    headersObj.forEach((value, key) => {
-      debugHeaders[key] = value || '(empty)';
-    });
     console.log(`[EbayClient] ${method} ${endpoint}`);
-    console.log(`[EbayClient] Headers:`, JSON.stringify(debugHeaders, null, 2));
 
     try {
       const response = await fetch(url, fetchOptions);
