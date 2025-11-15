@@ -52,6 +52,7 @@ const editListingSchema = z.object({
   title: z.string().min(10).max(80),
   description: z.string().min(20),
   priceCents: z.number().int().positive(),
+  ebaySku: z.string().min(1).max(50).regex(/^[a-zA-Z0-9]+$/, "SKU must be alphanumeric only"),
   categoryId: z.string().optional(),
   fulfillmentPolicyId: z.string().optional(),
   weightOz: z.number().positive().optional(),
@@ -558,6 +559,7 @@ function EditListingDialog({
       title: listing.title,
       description: listing.description,
       priceCents: listing.priceCents,
+      ebaySku: listing.ebaySku || "",
       categoryId: listing.categoryId || "",
       fulfillmentPolicyId: listing.fulfillmentPolicyId || "",
       weightOz: listing.weightOz,
@@ -588,6 +590,24 @@ function EditListingDialog({
                   <FormLabel>Title</FormLabel>
                   <FormControl>
                     <Input {...field} data-testid="input-edit-title" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="ebaySku"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>SKU</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="Alphanumeric only, max 50 characters"
+                      data-testid="input-edit-sku"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
