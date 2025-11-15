@@ -12,15 +12,15 @@ Preferred communication style: Simple, everyday language.
 The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives) and Tailwind CSS. The design is inspired by modern business applications like Linear and Stripe Dashboard, emphasizing clarity, data visibility, error prevention, and workflow efficiency. Key pages include Inventory, Draft Listing creation, Orders, Messages & Returns, Money & Ledger, and a Health dashboard.
 
 ### Critical eBay API Configuration
-**IMPORTANT**: eBay Sell APIs reject Accept-Language and Content-Language headers with specific values. Node.js fetch automatically injects these headers with values eBay rejects, causing 400 errors.
+**IMPORTANT**: eBay Sell APIs require Accept-Language and Content-Language headers to be valid BCP47 locales. Setting these headers to empty strings causes 400 errors because eBay rejects blank values.
 
-**Solution**: Explicitly set these headers to empty strings in all eBay API requests:
+**Solution**: Set these headers to a valid locale (e.g., "en-US") in all eBay API requests:
 ```typescript
-headersObj.set('Accept-Language', '');
-headersObj.set('Content-Language', '');
+headersObj.set('Accept-Language', 'en-US');
+headersObj.set('Content-Language', 'en-US');
 ```
 
-This overrides fetch's automatic injection and prevents 400 "Invalid value for header Accept-Language" errors.
+This ensures eBay accepts the requests and prevents 400 "Invalid value for header Content-Language" errors. All eBay API calls are centralized through the EbayClient class (server/lib/EbayClient.ts) which handles proper header configuration.
 
 ### Technical Implementations
 
