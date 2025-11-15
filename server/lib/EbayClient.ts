@@ -157,16 +157,15 @@ export class EbayClient {
       : `${EBAY_API_BASE}${endpoint}`;
 
     // Build headers - CENTRALIZED HEADER LOGIC
-    // Use Headers object and explicitly set/block problematic headers
+    // Use Headers object and set proper locale headers
     const headersObj = new Headers();
     headersObj.set('Authorization', `Bearer ${this.token}`);
     headersObj.set('Content-Type', 'application/json');
     headersObj.set('Accept', 'application/json');
     
-    // Explicitly set Accept-Language to empty to override fetch's automatic injection
-    // eBay rejects the default value that Node.js fetch adds
-    headersObj.set('Accept-Language', '');
-    headersObj.set('Content-Language', '');
+    // Set proper locale headers - eBay requires valid BCP47 locale, not empty strings
+    headersObj.set('Accept-Language', 'en-US');
+    headersObj.set('Content-Language', 'en-US');
 
     // Add marketplace header for endpoints that need it
     if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
@@ -184,7 +183,13 @@ export class EbayClient {
       body: body ? JSON.stringify(body) : undefined,
     };
 
+    // Debug: Log headers being sent
+    const debugHeaders: Record<string, string> = {};
+    headersObj.forEach((value, key) => {
+      debugHeaders[key] = value || '(empty)';
+    });
     console.log(`[EbayClient] ${method} ${endpoint}`);
+    console.log(`[EbayClient] Headers:`, JSON.stringify(debugHeaders, null, 2));
 
     try {
       const response = await fetch(url, fetchOptions);

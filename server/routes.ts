@@ -1755,18 +1755,17 @@ Output only JSON:
 
   // Edit a listing
   app.put("/api/listings/:id/edit", async (req, res) => {
-    const { getOffer, updateOffer, publishOfferTraced, createOrUpdateInventoryItemTraced } = await import("./lib/ebay");
-    const { ApiTracer } = await import("./lib/apiTracer");
     const { compareOffers } = await import("./lib/ebayOfferHelpers");
     const { z } = await import("zod");
     
-    const tracer = new ApiTracer();
+    const tracer = { log: (msg: string) => console.log(msg), getTrace: () => [] };
 
     // Server-side validation schema  
     const editSchema = z.object({
       title: z.string().min(10).max(80),
       description: z.string().min(20),
       priceCents: z.number().int().positive(),
+      ebaySku: z.string().min(1).max(50).regex(/^[a-zA-Z0-9]+$/, "SKU must be alphanumeric only"),
       categoryId: z.string().optional(),
       fulfillmentPolicyId: z.string().optional(),
       weightOz: z.number().positive().optional(),
@@ -1781,6 +1780,7 @@ Output only JSON:
       title: req.body.title,
       description: req.body.description,
       priceCents: Number(req.body.priceCents),
+      ebaySku: req.body.ebaySku,
       categoryId: req.body.categoryId,
       fulfillmentPolicyId: req.body.fulfillmentPolicyId,
       weightOz: req.body.weightOz ? Number(req.body.weightOz) : undefined,
@@ -1834,7 +1834,7 @@ Output only JSON:
       // UPDATE EBAY FIRST - if it fails, we won't corrupt local DB
       if (existingListing.ebayOfferId && existingListing.state === "live") {
         // Get current eBay offer
-        const currentOffer = await getOffer(existingListing.ebayOfferId, tracer);
+        const currentOffer = await ebayClient.getOffer(existingListing.ebayOfferId);
 
         // Compare what changed
         const comparison = compareOffers(currentOffer, {
@@ -1848,18 +1848,19 @@ Output only JSON:
 
         console.log(`[Edit Listing] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
 
-        // If dimensions or title/description changed, update inventory item
+        // If dimensions or title/description/SKU changed, update inventory item
         const inventoryNeedsUpdate = 
           validatedData.weightOz !== invItem.weightOz ||
           validatedData.dimsL !== invItem.dimsInL ||
           validatedData.dimsW !== invItem.dimsInW ||
           validatedData.dimsH !== invItem.dimsInH ||
+          validatedData.ebaySku !== existingListing.ebaySku ||
           comparison.nonRevisableChanges.includes("title") ||
           comparison.nonRevisableChanges.includes("description");
 
         if (inventoryNeedsUpdate) {
-          const sku = `ITEM-${existingListing.inventoryId}`;
-          await createOrUpdateInventoryItemTraced(sku, {
+          const sku = validatedData.ebaySku;
+          await ebayClient.upsertInventoryItem(sku, {
             product: {
               title: validatedData.title,
               description: validatedData.description,
@@ -1884,7 +1885,7 @@ Output only JSON:
                 unit: "INCH",
               },
             },
-          }, tracer);
+          });
         }
 
         // Get merchant location and policies
@@ -1906,8 +1907,8 @@ Output only JSON:
         );
 
         // Update offer on eBay
-        await updateOffer(existingListing.ebayOfferId, {
-          sku: `ITEM-${existingListing.inventoryId}`,
+        await ebayClient.updateOffer(existingListing.ebayOfferId, {
+          sku: validatedData.ebaySku,
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
           merchantLocationKey,
@@ -1924,11 +1925,11 @@ Output only JSON:
           },
           categoryId: validatedData.categoryId || existingListing.categoryId,
           availableQuantity: targetQuantity,
-        }, tracer);
+        });
 
         // Republish if needed
         if (comparison.nonRevisableChanges.length > 0 && currentOffer.status !== "PUBLISHED") {
-          await publishOfferTraced(existingListing.ebayOfferId, tracer);
+          await ebayClient.publishOffer(existingListing.ebayOfferId);
         }
 
         console.log(`[Edit Listing] Successfully updated eBay listing ${existingListing.ebayItemId}`);
@@ -1941,6 +1942,7 @@ Output only JSON:
           title: validatedData.title,
           description: validatedData.description,
           priceCents: validatedData.priceCents,
+          ebaySku: validatedData.ebaySku,
           categoryId: validatedData.categoryId,
           fulfillmentPolicyId: validatedData.fulfillmentPolicyId,
         })
