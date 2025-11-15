@@ -2056,7 +2056,8 @@ Output only JSON:
       const errors: any[] = [];
 
       // Use the centralized client with async generator
-      for await (const offerBatch of ebayClient.getAllOffers()) {
+      try {
+        for await (const offerBatch of ebayClient.getAllOffers()) {
         for (const offer of offerBatch) {
           try {
             const sku = offer.sku;
@@ -2128,6 +2129,19 @@ Output only JSON:
             errors.push({ sku: offer.sku, error: itemError.message });
           }
         }
+        }
+      } catch (ebayError: any) {
+        // Check if it's the SKU validation error from eBay
+        if (ebayError.message && ebayError.message.includes('25707') && ebayError.message.includes('invalid value for a SKU')) {
+          console.error("[Sync Listings] eBay SKU validation error:", ebayError.message);
+          return res.status(400).json({ 
+            error: "eBay Account Data Issue",
+            message: "Your eBay account contains one or more offers with invalid SKUs. eBay requires SKUs to be alphanumeric only and 50 characters or less. Please log into eBay Seller Hub, go to Inventory > Active Listings, and fix or remove listings with invalid SKUs, then try syncing again.",
+            details: ebayError.message,
+          });
+        }
+        // Re-throw other errors
+        throw ebayError;
       }
 
       console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length}`);

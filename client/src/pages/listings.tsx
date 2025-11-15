@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getApiErrorPayload } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -157,9 +157,11 @@ export default function ListingsPage() {
       });
     },
     onError: (error: any) => {
+      console.error("Sync failed:", error);
+      const { title, description } = getApiErrorPayload(error);
       toast({
-        title: "Sync failed",
-        description: error.message || "Failed to sync listings",
+        title,
+        description,
         variant: "destructive",
       });
     },
