@@ -1224,11 +1224,8 @@ Output only JSON:
     const {
       getOffersBySku,
       getOffer,
-      createOfferTraced,
-      publishOfferTraced,
       updateOffer,
       withdrawOffer,
-      createOrUpdateInventoryItemTraced,
     } = await import("./lib/ebay");
 
     const tracer = new ApiTracer();
@@ -1373,7 +1370,7 @@ Output only JSON:
         };
       }
 
-      await createOrUpdateInventoryItemTraced(sku, inventoryItemPayload, tracer);
+      await ebayClient.upsertInventoryItem(sku, inventoryItemPayload);
 
       // Get or create merchant location
       const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
@@ -1490,7 +1487,7 @@ Output only JSON:
             }, tracer);
 
             // Republish
-            await publishOfferTraced(offerId, tracer);
+            await ebayClient.publishOffer(offerId);
           } else if (comparison.revisableChanges.length > 0) {
             // Only revisable changes: update in-place (revise)
             await updateOffer(offerId, {
@@ -1514,20 +1511,20 @@ Output only JSON:
 
             // If not published, publish now
             if (existingOffer.status !== "PUBLISHED") {
-              await publishOfferTraced(offerId, tracer);
+              await ebayClient.publishOffer(offerId);
             }
           }
         } else if (existingOffer.status !== "PUBLISHED") {
           // No changes but not published - publish it
           console.log(`[Publish] No changes detected, publishing unpublished offer`);
-          await publishOfferTraced(offerId, tracer);
+          await ebayClient.publishOffer(offerId);
         } else {
           console.log(`[Publish] No changes detected, offer already published`);
         }
       } else {
         // No existing offer - create new one
         console.log(`[Publish] No existing offer found, creating new offer`);
-        const offerData = await createOfferTraced({
+        const offerData = await ebayClient.createOffer({
           sku,
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
@@ -1544,10 +1541,10 @@ Output only JSON:
             },
           },
           categoryId,
-        }, tracer);
+        });
 
         offerId = offerData.offerId;
-        await publishOfferTraced(offerId, tracer);
+        await ebayClient.publishOffer(offerId);
       }
 
       // Verify offer published and get itemId

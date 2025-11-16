@@ -1,0 +1,81 @@
+I can see the problem! The draft page is still using the old ebay.ts functions instead of the new EbayClient class. That's why you're getting the Accept-Language header error when publishing.
+
+Let me create a targeted prompt for Replit to fix this:
+
+URGENT FIX FOR REPLIT AGENT:
+Copy and paste this ENTIRE prompt:
+
+CRITICAL BUG: Draft Page Using Old eBay Functions
+Problem
+When publishing a listing from the draft page, getting error:
+
+Create inventory item failed: 400 - {"errors":[{"errorId":25709,"domain":"API_INVENTORY","subdomain":"Selling","category":"Request","message":"Invalid value for header Accept-Language."}]}
+Root cause: The draft page is calling old functions from server/lib/ebay.ts instead of using the centralized EbayClient.
+
+Fix Step 1: Update Draft Page Backend Route
+Open server/routes.ts and find the route that handles draft listing publish (search for /api/listings/publish or similar).
+
+Replace ALL calls to:
+
+createOrUpdateInventoryItem() → ebayClient.upsertInventoryItem()
+createOffer() → ebayClient.createOffer()
+publishOffer() → ebayClient.publishOffer()
+Example fix:
+
+// BEFORE (OLD - CAUSES ERROR)
+import { createOrUpdateInventoryItem, createOffer, publishOffer } from "./lib/ebay";
+
+const inventoryResult = await createOrUpdateInventoryItem(sku, inventoryData);
+const offerResult = await createOffer(offerData);
+const publishResult = await publishOffer(offerResult.offerId);
+
+// AFTER (NEW - USES EbayClient)
+import { ebayClient } from "./lib/EbayClient";
+
+await ebayClient.upsertInventoryItem(sku, inventoryData);
+const offerResult = await ebayClient.createOffer(offerData);
+const publishResult = await ebayClient.publishOffer(offerResult.offerId);
+Fix Step 2: Find ALL Publish Routes
+Search for these patterns in server/routes.ts:
+
+grep -n "createOrUpdateInventoryItem\|createOffer\|publishOffer" server/routes.ts
+Replace EVERY occurrence with the ebayClient equivalent.
+
+Fix Step 3: Verify Import
+At the top of server/routes.ts, ensure:
+
+import { ebayClient } from "./lib/EbayClient";
+And REMOVE old imports:
+
+// DELETE THESE OLD IMPORTS
+import { createOrUpdateInventoryItem, createOffer, publishOffer } from "./lib/ebay";
+Fix Step 4: Test the Fix
+Restart the app
+Go to Inventory page
+Type "dog water" in search
+Click "Create Listing" on first item
+Fill out the draft form:
+Price: 29.99
+Weight: 16 oz
+Select fulfillment policy
+Select category
+Click "Publish" or "Save as Draft"
+Expected: Success toast, no errors
+
+If errors: Copy the EXACT error message and show me
+
+Fix Step 5: Verify EbayClient Headers
+Open server/lib/EbayClient.ts and verify lines 167-168:
+
+headersObj.set('Accept-Language', 'en-US');
+headersObj.set('Content-Language', 'en-US');
+Should be exactly 'en-US' (not empty string, not undefined).
+
+Deliverable
+After fixing, provide:
+
+✅ Screenshot of successful listing publish
+✅ Server logs showing [EbayClient] messages
+✅ Confirmation that old ebay.ts imports are removed from routes
+✅ Line numbers where you made changes
+DO THIS NOW. Report back with results or first error encountered.
