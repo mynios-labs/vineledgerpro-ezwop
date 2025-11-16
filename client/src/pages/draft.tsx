@@ -104,6 +104,8 @@ export default function DraftPage() {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [publishState, setPublishState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [publishResult, setPublishResult] = useState<any>(null);
+  const [generatedSku, setGeneratedSku] = useState<string>("");
+  const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
 
   const { data: vineItem } = useQuery<VineItem>({
     queryKey: [`/api/vine-items/${vineItemId}`],
@@ -148,6 +150,20 @@ export default function DraftPage() {
     setSelectedFulfillmentPolicyId(null);
     setSelectedFulfillmentPolicyName(null);
   }, [vineItemId, listingId]);
+
+  // Auto-generate SKU from title
+  useEffect(() => {
+    if (userEditedSku) return;
+
+    const currentTitle = editableTitles[selectedTitle];
+    if (!currentTitle) return;
+
+    const prefix = currentTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
+    const suffix = Math.floor(1000 + Math.random() * 9000);
+    const sku = `${prefix}-EZWOP-${suffix}`;
+    
+    setGeneratedSku(sku);
+  }, [editableTitles, selectedTitle, userEditedSku]);
 
   // Auto-select fulfillment policy if only one available
   useEffect(() => {
@@ -419,6 +435,7 @@ export default function DraftPage() {
       formData.append("dimsL", dimsL);
       formData.append("dimsW", dimsW);
       formData.append("dimsH", dimsH);
+      formData.append("sku", generatedSku);
 
       // Open modal and set loading state
       setPublishModalOpen(true);
@@ -1026,9 +1043,32 @@ export default function DraftPage() {
                     </div>
                   </>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4">
+                  <>
+                    {/* SKU Field */}
                     <div className="space-y-2">
-                      <Label htmlFor="price">Item Price ($)</Label>
+                      <Label htmlFor="sku">
+                        SKU (Stock Keeping Unit)
+                        <span className="text-xs text-muted-foreground ml-2">• Auto-generated</span>
+                      </Label>
+                      <Input
+                        id="sku"
+                        value={generatedSku}
+                        onChange={(e) => {
+                          setGeneratedSku(e.target.value);
+                          setUserEditedSku(true);
+                        }}
+                        placeholder="AUTO-EZWOP-1234"
+                        className="font-mono text-sm"
+                        data-testid="input-sku"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This unique code tracks your inventory. Auto-generated but you can customize it.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="price">Item Price ($)</Label>
                       <Input
                         id="price"
                         type="number"
@@ -1051,6 +1091,7 @@ export default function DraftPage() {
                       />
                     </div>
                   </div>
+                  </>
                 )}
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
