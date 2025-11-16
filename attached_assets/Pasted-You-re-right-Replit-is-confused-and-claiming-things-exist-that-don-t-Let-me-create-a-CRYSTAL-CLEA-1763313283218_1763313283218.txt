@@ -1,0 +1,408 @@
+You're right - Replit is confused and claiming things exist that don't. Let me create a CRYSTAL CLEAR, step-by-step prompt with NO room for confusion:
+
+ULTRA-EXPLICIT PROMPT FOR REPLIT AGENT
+Copy this ENTIRE prompt and paste it into Replit Agent:
+
+TASK: Fix Sync, Add SKU Auto-Generation (EXACT INSTRUCTIONS)
+READ THIS FIRST:
+
+Follow steps in EXACT order (1, 2, 3, 4, 5)
+Do NOT skip steps
+Do NOT assume anything already exists
+Create files EXACTLY as shown
+Test after EACH step
+STEP 1: CREATE THE EbayClient CLASS
+1.1 Create NEW file (it doesn't exist yet)
+Action: Create a brand new file at this exact path:
+
+server/lib/EbayClient.ts
+Content: Copy this ENTIRE code block into the new file:
+
+import { getAccessToken } from './ebay';
+
+const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
+  ? "https://api.ebay.com"
+  : "https://api.sandbox.ebay.com";
+
+const MARKETPLACE_ID = "EBAY_US";
+
+export interface EbayOffer {
+  offerId: string;
+  sku?: string | null;
+  status: 'PUBLISHED' | 'UNPUBLISHED' | 'ENDED';
+  availableQuantity?: number;
+  pricingSummary?: { price?: { value: string; currency: string; }; };
+  listing?: { listingId?: string; title?: string; };
+}
+
+interface RequestOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  body?: any;
+  headers?: Record<string, string>;
+  requiresMarketplace?: boolean;
+}
+
+export class EbayClient {
+  private token: string | null = null;
+
+  private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+    const { method = 'GET', body, headers: customHeaders = {}, requiresMarketplace = true } = options;
+
+    if (!this.token) {
+      this.token = await getAccessToken();
+    }
+
+    const url = endpoint.startsWith('http') ? endpoint : `${EBAY_API_BASE}${endpoint}`;
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${this.token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
+      ...customHeaders,
+    };
+
+    if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
+      headers['X-EBAY-C-MARKETPLACE-ID'] = MARKETPLACE_ID;
+    }
+
+    const fetchOptions: RequestInit = {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    };
+
+    console.log(`[EbayClient] ${method} ${endpoint}`);
+
+    const response = await fetch(url, fetchOptions);
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const delay = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+        console.log(`[EbayClient] Rate limited, retrying after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.request<T>(endpoint, options);
+      }
+
+      let errorData;
+      try { errorData = JSON.parse(responseText); } 
+      catch { errorData = { message: responseText }; }
+
+      throw new Error(`eBay API error ${response.status}: ${JSON.stringify(errorData)}`);
+    }
+
+    return responseText ? JSON.parse(responseText) : null;
+  }
+
+  async *getAllOffers(): AsyncGenerator<EbayOffer[]> {
+    let offset = 0;
+    const limit = 200;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `/sell/inventory/v1/offer?marketplace_id=${MARKETPLACE_ID}&limit=${limit}&offset=${offset}`;
+      const response: any = await this.request(url);
+      const items = response.offers || [];
+
+      if (items.length > 0) {
+        yield items;
+        offset += items.length;
+        hasMore = items.length === limit;
+      } else {
+        hasMore = false;
+      }
+    }
+  }
+
+  async getOffer(offerId: string): Promise<EbayOffer> {
+    return this.request<EbayOffer>(`/sell/inventory/v1/offer/${offerId}`);
+  }
+
+  async createOffer(offer: any): Promise<{ offerId: string }> {
+    const result = await this.request<{ offerId: string }>('/sell/inventory/v1/offer', { method: 'POST', body: offer });
+    if (!result.offerId) throw new Error('eBay create offer failed: No offerId in response');
+    return result;
+  }
+
+  async publishOffer(offerId: string): Promise<{ listingId: string }> {
+    const result = await this.request<{ listingId: string }>(`/sell/inventory/v1/offer/${offerId}/publish`, { method: 'POST' });
+    if (!result.listingId) throw new Error('eBay publish offer failed: No listingId in response');
+    return result;
+  }
+
+  async upsertInventoryItem(sku: string, item: any): Promise<void> {
+    await this.request<void>(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, { method: 'PUT', body: item });
+    console.log(`[EbayClient] Inventory item upserted: ${sku}`);
+  }
+}
+
+export const ebayClient = new EbayClient();
+Verification: After creating the file, run:
+
+ls -la server/lib/EbayClient.ts
+Expected output: File exists and is ~3KB
+
+STEP 2: FIX THE SYNC ROUTE TO HANDLE MISSING SKUs
+2.1 Open the routes file
+Action: Open this file:
+
+server/routes.ts
+2.2 Find the sync route
+Action: Search for this exact text in the file:
+
+app.post("/api/listings/sync-from-ebay"
+You should find it around line 2048-2049.
+
+2.3 Replace the ENTIRE route
+Action: Delete everything from app.post("/api/listings/sync-from-ebay" down to the closing }); (around line 2145).
+
+Action: Replace with this EXACT code:
+
+app.post("/api/listings/sync-from-ebay", async (_req, res) => {
+  try {
+    const token = await getAccessToken();
+    const auth = { accessToken: token, marketplaceId: "EBAY_US" };
+    
+    console.log("[Sync] Starting sync...");
+    const ebayListings = await fetchAllEbayListings(auth);
+    console.log(`[Sync] Fetched ${ebayListings.length} listings from eBay`);
+    
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    const errors: any[] = [];
+
+    for (const l of ebayListings) {
+      try {
+        // CRITICAL: Generate SKU if missing
+        let sku = l.sku;
+        
+        if (!sku && l.itemId) {
+          sku = `EBAY-${l.itemId}`;
+          console.log(`[Sync] Generated SKU from itemId: ${sku}`);
+        } else if (!sku && l.title) {
+          const prefix = l.title.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
+          const suffix = Math.floor(1000 + Math.random() * 9000);
+          sku = `${prefix}-EZWOP-${suffix}`;
+          console.log(`[Sync] Generated SKU from title: ${sku}`);
+        } else if (!sku) {
+          const suffix = Math.floor(1000 + Math.random() * 9000);
+          sku = `ITEM-EZWOP-${suffix}`;
+          console.log(`[Sync] Generated fallback SKU: ${sku}`);
+        }
+
+        const priceCents = l.price != null ? Math.round(l.price * 100) : 0;
+        const title = l.title || sku || "Untitled";
+        
+        // Find existing listing
+        let existing = null;
+        if (l.itemId) {
+          [existing] = await db.select().from(listings).where(eq(listings.ebayItemId, l.itemId));
+        }
+        if (!existing && sku) {
+          [existing] = await db.select().from(listings).where(eq(listings.ebaySku, sku));
+        }
+
+        if (!existing) {
+          // Create new
+          const [newInventory] = await db.insert(inventoryItems).values({
+            vineItemId: null,
+            source: "ebay",
+            condition: "New",
+            quantity: l.quantity || 1,
+            privacyPassed: true,
+          }).returning();
+
+          await db.insert(listings).values({
+            inventoryId: newInventory.inventoryId,
+            title,
+            description: "",
+            priceCents,
+            state: l.status,
+            ebayItemId: l.itemId,
+            ebaySku: sku,
+            ebayOfferId: l.offerId,
+            lastSyncedAt: new Date(),
+          });
+          created++;
+          console.log(`[Sync] Created: ${title} (SKU: ${sku})`);
+        } else {
+          // Update existing
+          await db.update(inventoryItems).set({ source: "ebay" }).where(eq(inventoryItems.inventoryId, existing.inventoryId));
+
+          const changed = existing.title !== title || existing.priceCents !== priceCents || existing.state !== l.status;
+
+          if (changed) {
+            await db.update(listings).set({
+              title,
+              priceCents,
+              state: l.status,
+              ebaySku: sku || existing.ebaySku,
+              lastSyncedAt: new Date(),
+            }).where(eq(listings.listingId, existing.listingId));
+            updated++;
+            console.log(`[Sync] Updated: ${title}`);
+          } else {
+            unchanged++;
+          }
+        }
+      } catch (itemError: any) {
+        console.error(`[Sync] Error processing listing:`, itemError);
+        errors.push({ itemId: l.itemId, sku: l.sku, title: l.title, error: itemError.message });
+      }
+    }
+
+    console.log(`[Sync] ✅ COMPLETE: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length} total=${ebayListings.length}`);
+    
+    res.json({ total: ebayListings.length, created, updated, unchanged, failed: errors.length, errors: errors.length > 0 ? errors : undefined });
+  } catch (e: any) {
+    console.error("[Sync] ❌ FATAL ERROR:", e);
+    res.status(500).json({ error: e.message || "sync failed" });
+  }
+});
+Verification: Search for Generated SKU in the new code - you should find 3 instances.
+
+STEP 3: ADD SKU AUTO-GENERATION TO DRAFT PAGE
+3.1 Open the draft page
+Action: Open this file:
+
+client/src/pages/draft.tsx
+3.2 Add state variables
+Action: Find this line (around line 106):
+
+const [publishResult, setPublishResult] = useState<any>(null);
+Action: Add these TWO new lines IMMEDIATELY after it:
+
+const [generatedSku, setGeneratedSku] = useState<string>("");
+const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
+3.3 Add SKU generation effect
+Action: Find the line that says (around line 200):
+
+}, [vineItemId, listingId]);
+Action: Add this ENTIRE useEffect block IMMEDIATELY after that line:
+
+
+// Auto-generate SKU from title
+useEffect(() => {
+  if (userEditedSku) return;
+
+  const currentTitle = editableTitles[selectedTitle];
+  if (!currentTitle) return;
+
+  const prefix = currentTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
+  const suffix = Math.floor(1000 + Math.random() * 9000);
+  const sku = `${prefix}-EZWOP-${suffix}`;
+  
+  setGeneratedSku(sku);
+}, [editableTitles, selectedTitle, userEditedSku]);
+3.4 Add SKU input field to UI
+Action: Search for this exact text:
+
+<Label htmlFor="price">
+Action: Add this ENTIRE block BEFORE the price label:
+
+{/* SKU Field */}
+<div className="space-y-2">
+  <Label htmlFor="sku">
+    SKU (Stock Keeping Unit)
+    <span className="text-xs text-muted-foreground ml-2">• Auto-generated</span>
+  </Label>
+  <Input
+    id="sku"
+    value={generatedSku}
+    onChange={(e) => {
+      setGeneratedSku(e.target.value);
+      setUserEditedSku(true);
+    }}
+    placeholder="AUTO-EZWOP-1234"
+    className="font-mono text-sm"
+  />
+  <p className="text-xs text-muted-foreground">
+    This unique code tracks your inventory. Auto-generated but you can customize it.
+  </p>
+</div>
+
+3.5 Include SKU in the publish mutation
+Action: Search for this text:
+
+categoryId: selectedCategoryId
+Action: Add this line IMMEDIATELY after it (make sure to add a comma after categoryId line):
+
+sku: generatedSku,
+STEP 4: TEST EVERYTHING
+4.1 Test Sync Button
+Action: Click "Sync now" button on Listings page
+
+Expected console output:
+
+[Sync] Starting sync...
+[Sync] Fetched X listings from eBay
+[Sync] Generated SKU from itemId: EBAY-123456 (if any missing SKU)
+[Sync] Created: ... (if new)
+[Sync] Updated: ... (if existing)
+[Sync] ✅ COMPLETE: created=X updated=Y unchanged=Z failed=0 total=N
+Expected UI:
+
+All eBay listings appear in grid
+No error toast
+Each listing has a SKU
+4.2 Test SKU Auto-Generation
+Action: Go to Inventory → Click "Create Listing" on any item
+
+Expected behavior:
+
+SKU field appears
+SKU is auto-populated (format: XXXX-EZWOP-1234)
+When you edit title, SKU updates
+When you manually edit SKU, it stops auto-updating
+4.3 Test Save with SKU
+Action: Fill out the form and click Save/Publish
+
+Expected: Listing saves with the SKU, no errors
+
+STEP 5: VERIFICATION CHECKLIST
+Before marking complete, verify ALL of these:
+
+
+File [object Object] exists (run [object Object])
+
+Sync route contains [object Object] text (3 times)
+
+Draft page has [object Object] state variable
+
+Draft page has [object Object] state variable
+
+Draft page has SKU useEffect with [object Object] deps
+
+Draft page UI shows SKU input field
+
+Test 4.1 passes (sync works)
+
+Test 4.2 passes (SKU auto-generates)
+
+Test 4.3 passes (save works)
+
+Console log shows [object Object] message
+
+No errors in browser console
+
+No errors in server logs
+DELIVERABLES
+After completing ALL steps, provide:
+
+Screenshot of terminal showing:
+ls server/lib/EbayClient.ts
+Screenshot of server logs showing successful sync with ✅ COMPLETE message
+Screenshot of Draft page showing auto-generated SKU
+Screenshot of Listings page showing synced listings
+IMPORTANT:
+
+Do steps in order: 1 → 2 → 3 → 4 → 5
+Do NOT skip any step
+Do NOT assume files exist
+Test BEFORE marking complete
+Provide ALL 4 screenshots when done
+Copy and paste this ENTIRE prompt to Replit. It's explicit enough that even a confused AI can follow it step-by-step!
