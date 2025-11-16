@@ -1753,6 +1753,62 @@ Output only JSON:
     }
   });
 
+  // Get single listing by ID with all details needed for editing
+  app.get("/api/listings/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const [listing] = await db
+        .select({
+          listingId: listings.listingId,
+          inventoryId: listings.inventoryId,
+          ebayOfferId: listings.ebayOfferId,
+          ebayItemId: listings.ebayItemId,
+          categoryId: listings.categoryId,
+          title: listings.title,
+          description: listings.description,
+          priceCents: listings.priceCents,
+          fulfillmentPolicyId: listings.fulfillmentPolicyId,
+          publishedAt: listings.publishedAt,
+          state: listings.state,
+          photoSetId: inventoryItems.photoSetId,
+          weightOz: inventoryItems.weightOz,
+          dimsL: inventoryItems.dimsInL,
+          dimsW: inventoryItems.dimsInW,
+          dimsH: inventoryItems.dimsInH,
+          quantity: inventoryItems.quantity,
+          vineItemId: inventoryItems.vineItemId,
+          ebaySku: listings.ebaySku,
+        })
+        .from(listings)
+        .leftJoin(inventoryItems, eq(listings.inventoryId, inventoryItems.inventoryId))
+        .where(eq(listings.listingId, id));
+
+      if (!listing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Fetch photos if available
+      let photos: string[] = [];
+      if (listing.photoSetId) {
+        const [photoSet] = await db
+          .select()
+          .from(photoSets)
+          .where(eq(photoSets.photoSetId, listing.photoSetId));
+        
+        photos = photoSet?.urls || [];
+      }
+
+      res.json({
+        ...listing,
+        photos,
+      });
+    } catch (error: any) {
+      console.error("[Get Listing By ID] Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Edit a listing
   app.put("/api/listings/:id/edit", async (req, res) => {
     const { compareOffers } = await import("./lib/ebayOfferHelpers");

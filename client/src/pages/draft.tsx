@@ -227,13 +227,16 @@ export default function DraftPage() {
   });
 
   // Reset category and fulfillment policy state when switching to a different item
+  // Only reset when creating (vineItemId), not when editing (listingId)
   useEffect(() => {
-    setSelectedCategoryId(null);
-    setSelectedCategoryName(null);
-    setUserOverrodeCategory(false);
-    setCategorySearch("");
-    setSelectedFulfillmentPolicyId(null);
-    setSelectedFulfillmentPolicyName(null);
+    if (!listingId) {
+      setSelectedCategoryId(null);
+      setSelectedCategoryName(null);
+      setUserOverrodeCategory(false);
+      setCategorySearch("");
+      setSelectedFulfillmentPolicyId(null);
+      setSelectedFulfillmentPolicyName(null);
+    }
   }, [vineItemId, listingId]);
 
   // Auto-generate SKU with guaranteed uniqueness using full vineItemId
@@ -679,7 +682,7 @@ export default function DraftPage() {
             </Card>
 
             {/* Category Selector */}
-            {vineItem && (
+            {(vineItem || listing) && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Category</CardTitle>
@@ -751,7 +754,7 @@ export default function DraftPage() {
             )}
 
             {/* Fulfillment Policy Selector */}
-            {vineItem && (
+            {(vineItem || listing) && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Fulfillment Policy</CardTitle>
