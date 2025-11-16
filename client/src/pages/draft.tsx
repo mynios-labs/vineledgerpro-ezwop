@@ -278,6 +278,19 @@ export default function DraftPage() {
     }
   }, [titleSuggestions, vineItem]);
 
+  // Fallback: If AI generation fails, still show the original vine item title
+  useEffect(() => {
+    if (vineItem && editableTitles.length === 0 && !generatingTitles) {
+      // After a delay, if we still don't have titles, use just the original
+      const timeoutId = setTimeout(() => {
+        if (editableTitles.length === 0) {
+          setEditableTitles([vineItem.titleNorm]);
+        }
+      }, 3000); // Wait 3 seconds for AI generation before falling back
+      return () => clearTimeout(timeoutId);
+    }
+  }, [vineItem, editableTitles.length, generatingTitles]);
+
   // Re-initialize titles when regenerating (regenerateCount changes)
   useEffect(() => {
     if (regenerateCount > 0 && titleSuggestions && vineItem) {
