@@ -281,12 +281,79 @@ export class EbayClient {
 
   /**
    * Get all offers (paginated)
+   * NOTE: This can fail if account has any listings with invalid SKUs
    */
   async *getAllOffers(): AsyncGenerator<EbayOffer[]> {
     yield* this.requestPaginated<EbayOffer>(
       `/sell/inventory/v1/offer?marketplace_id=${MARKETPLACE_ID}`,
       'offers'
     );
+  }
+
+  /**
+   * Get active listings using Trading API (more robust than Inventory API)
+   * Falls back gracefully when Inventory API fails due to invalid SKUs
+   */
+  async getActiveListingsViaTrading(): Promise<Array<{
+    itemId: string;
+    title: string;
+    sku?: string;
+    quantity: number;
+    price: number;
+  }>> {
+    const XMLParser = (await import('fast-xml-parser')).XMLParser;
+    const token = await getAccessToken();
+    
+    const xmlBody = `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>${token}</eBayAuthToken>
+  </RequesterCredentials>
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination>
+      <EntriesPerPage>200</EntriesPerPage>
+      <PageNumber>1</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetMyeBaySellingRequest>`;
+
+    const response = await fetch(`${EBAY_API_BASE}/ws/api.dll`, {
+      method: 'POST',
+      headers: {
+        'X-EBAY-API-SITEID': '0',
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+        'X-EBAY-API-CALL-NAME': 'GetMyeBaySelling',
+        'Content-Type': 'text/xml',
+      },
+      body: xmlBody,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Trading API failed: ${response.status} - ${text}`);
+    }
+
+    const xmlText = await response.text();
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      parseAttributeValue: true,
+    });
+    const result = parser.parse(xmlText);
+
+    const items = result?.GetMyeBaySellingResponse?.ActiveList?.ItemArray?.Item || [];
+    const itemArray = Array.isArray(items) ? items : [items];
+
+    return itemArray
+      .filter((item: any) => item?.ItemID)
+      .map((item: any) => ({
+        itemId: String(item.ItemID),  // Convert to string to match database type
+        title: item.Title || '',
+        sku: item.SKU || null,
+        quantity: parseInt(item.QuantityAvailable || item.Quantity || '0', 10),
+        price: parseFloat(item.SellingStatus?.CurrentPrice?.['#text'] || item.BuyItNowPrice?.['#text'] || '0'),
+      }));
   }
 
   /**

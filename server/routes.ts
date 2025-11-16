@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
-import { eq, desc, asc, and, or, like, ilike, inArray, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, ilike, inArray, sql, isNotNull, ne } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
@@ -2057,8 +2057,104 @@ Output only JSON:
       let unchanged = 0;
       const errors: any[] = [];
 
-      // Use the centralized client with async generator
+      // Try Inventory API first, fallback to Trading API if it fails
+      let useInventoryAPI = true;
+      let tradingListings: any[] = [];
+
       try {
+        // Test if Inventory API works by trying to get first batch
+        const testGen = ebayClient.getAllOffers();
+        const firstBatch = await testGen.next();
+        if (firstBatch.done || !firstBatch.value) {
+          console.log("[Sync] Inventory API returned no data, using Trading API");
+          useInventoryAPI = false;
+        }
+      } catch (inventoryError: any) {
+        console.log("[Sync] Inventory API failed (likely invalid SKU issue), falling back to Trading API");
+        console.log("[Sync] Inventory error:", inventoryError.message);
+        useInventoryAPI = false;
+      }
+
+      if (!useInventoryAPI) {
+        // Use Trading API to get active listings
+        console.log("[Sync] Using Trading API (GetMyeBaySelling)...");
+        tradingListings = await ebayClient.getActiveListingsViaTrading();
+        console.log(`[Sync] Trading API returned ${tradingListings.length} active listings`);
+
+        // Process Trading API listings
+        for (const item of tradingListings) {
+          try {
+            const sku = item.sku || `EBAY-${item.itemId}`;
+            const title = item.title || sku || "Untitled";
+            const priceCents = Math.round(item.price * 100);
+            const state: 'live' | 'draft' | 'ended' = 'live';
+
+            console.log(`[Sync] Processing eBay listing: ${title} (ID: ${item.itemId}, SKU: ${sku})`);
+
+            // Find existing listing
+            let existing = null;
+            [existing] = await db.select().from(listings).where(eq(listings.ebayItemId, item.itemId));
+            
+            if (!existing && sku) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebaySku, sku));
+            }
+
+            if (existing) {
+              console.log(`[Sync] Found existing listing: ${existing.title} (state: ${existing.state})`);
+            }
+
+            if (!existing) {
+              // Create new inventory and listing
+              const [newInventory] = await db.insert(inventoryItems).values({
+                vineItemId: null,
+                source: "ebay",
+                condition: "New",
+                quantity: item.quantity || 1,
+                privacyPassed: true,
+              }).returning();
+
+              await db.insert(listings).values({
+                inventoryId: newInventory.inventoryId,
+                title,
+                description: "",
+                priceCents,
+                state,
+                ebayItemId: item.itemId,
+                ebaySku: sku,
+                ebayOfferId: null,
+                lastSyncedAt: new Date(),
+              });
+              created++;
+              console.log(`[Sync] Created: ${title} (SKU: ${sku})`);
+            } else {
+              // Update existing
+              await db.update(inventoryItems)
+                .set({ source: "ebay" })
+                .where(eq(inventoryItems.inventoryId, existing.inventoryId));
+
+              const changed = existing.title !== title || existing.priceCents !== priceCents || existing.state !== state;
+              
+              if (changed) {
+                await db.update(listings).set({
+                  title,
+                  priceCents,
+                  state,
+                  ebaySku: sku || existing.ebaySku,
+                  lastSyncedAt: new Date(),
+                }).where(eq(listings.listingId, existing.listingId));
+                updated++;
+                console.log(`[Sync] Updated: ${title}`);
+              } else {
+                unchanged++;
+              }
+            }
+          } catch (itemError: any) {
+            console.error(`[Sync] Error processing listing:`, itemError);
+            errors.push({ itemId: item.itemId, sku: item.sku, title: item.title, error: itemError.message });
+          }
+        }
+      } else {
+        // Use Inventory API (original code path)
         for await (const offerBatch of ebayClient.getAllOffers()) {
         for (const offer of offerBatch) {
           try {
@@ -2154,23 +2250,49 @@ Output only JSON:
           }
         }
         }
-      } catch (ebayError: any) {
-        // Check if it's the SKU validation error from eBay
-        if (ebayError.message && ebayError.message.includes('25707') && ebayError.message.includes('invalid value for a SKU')) {
-          console.error("[Sync] eBay SKU validation error:", ebayError.message);
-          return res.status(400).json({ 
-            error: "eBay Account Data Issue",
-            message: "Your eBay account contains one or more offers with invalid SKUs. eBay requires SKUs to be alphanumeric only and 50 characters or less. Please log into eBay Seller Hub, go to Inventory > Active Listings, and fix or remove listings with invalid SKUs, then try syncing again.",
-            details: ebayError.message,
-          });
-        }
-        // Re-throw other errors
-        throw ebayError;
       }
 
-      console.log(`[Sync] ✅ COMPLETE: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length}`);
+      // Mark removed listings as 'ended' (listings that exist in DB but not on eBay)
+      const activeEbayItemIds = new Set<string>();
       
-      res.json({ total: created + updated + unchanged, created, updated, unchanged, failed: errors.length, errors: errors.length > 0 ? errors : undefined });
+      if (!useInventoryAPI && tradingListings.length > 0) {
+        for (const item of tradingListings) {
+          if (item.itemId) {
+            activeEbayItemIds.add(item.itemId);
+            console.log(`[Sync] Added to active set: ${item.itemId}`);
+          }
+        }
+      }
+
+      console.log(`[Sync] Active eBay item IDs: ${Array.from(activeEbayItemIds).join(', ')}`);
+
+      // Get all listings from our database that have eBay item IDs and are not already ended
+      const dbListings = await db.select().from(listings).where(
+        and(
+          isNotNull(listings.ebayItemId),
+          ne(listings.state, 'ended')
+        )
+      );
+
+      console.log(`[Sync] Checking ${dbListings.length} DB listings for removal`);
+
+      let ended = 0;
+      for (const dbListing of dbListings) {
+        console.log(`[Sync] Checking listing: ${dbListing.title} (ID: ${dbListing.ebayItemId}) - In active set? ${activeEbayItemIds.has(dbListing.ebayItemId || '')}`);
+        if (dbListing.ebayItemId && !activeEbayItemIds.has(dbListing.ebayItemId)) {
+          // This listing exists in our DB but not on eBay anymore - mark as ended
+          await db.update(listings).set({
+            state: 'ended',
+            lastSyncedAt: new Date(),
+          }).where(eq(listings.listingId, dbListing.listingId));
+          ended++;
+          console.log(`[Sync] Marked as ended (removed from eBay): ${dbListing.title}`);
+        }
+      }
+
+      console.log(`[Sync] ✅ COMPLETE: created=${created} updated=${updated} unchanged=${unchanged} ended=${ended} failed=${errors.length}`);
+      
+      res.json({ total: created + updated + unchanged + ended, created, updated, unchanged, ended, failed: errors.length, errors: errors.length > 0 ? errors : undefined });
     } catch (e: any) {
       console.error("[Sync] ❌ FATAL ERROR:", e);
       res.status(500).json({ error: e.message || "sync failed" });
