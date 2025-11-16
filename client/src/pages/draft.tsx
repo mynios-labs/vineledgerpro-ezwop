@@ -112,10 +112,95 @@ export default function DraftPage() {
     enabled: !!vineItemId,
   });
 
-  const { data: listing } = useQuery<Listing>({
+  const { data: listing } = useQuery<any>({
     queryKey: [`/api/listings/${listingId}`],
     enabled: !!listingId,
   });
+
+  // Pre-populate form when editing an existing listing
+  useEffect(() => {
+    if (listing && listingId) {
+      console.log("[EDIT MODE] Pre-populating form with listing data:", listing);
+      
+      // Set title
+      if (listing.title && editableTitles.length === 0) {
+        setEditableTitles([listing.title]);
+        setSelectedTitle(0);
+      }
+      
+      // Set price
+      if (listing.priceCents) {
+        setPrice((listing.priceCents / 100).toString());
+      }
+      
+      // Set dimensions and weight
+      if (listing.dimsL) setDimsL(listing.dimsL.toString());
+      if (listing.dimsW) setDimsW(listing.dimsW.toString());
+      if (listing.dimsH) setDimsH(listing.dimsH.toString());
+      if (listing.weightOz) setWeightOz(listing.weightOz.toString());
+      
+      // Set category
+      if (listing.categoryId) {
+        setSelectedCategoryId(listing.categoryId);
+      }
+      
+      // Set fulfillment policy
+      if (listing.fulfillmentPolicyId) {
+        setSelectedFulfillmentPolicyId(listing.fulfillmentPolicyId);
+      }
+      
+      // Set description (try to parse if structured, otherwise use plain text)
+      if (listing.description) {
+        try {
+          // Try to parse as structured description
+          const lines = listing.description.split('\n');
+          const bullets: string[] = [];
+          let intro = "";
+          let closing = "";
+          let inBullets = false;
+          
+          for (const line of lines) {
+            if (line.trim().startsWith('•')) {
+              bullets.push(line.trim().substring(1).trim());
+              inBullets = true;
+            } else if (!inBullets && line.trim()) {
+              intro += (intro ? '\n' : '') + line.trim();
+            } else if (inBullets && line.trim()) {
+              closing += (closing ? '\n' : '') + line.trim();
+            }
+          }
+          
+          if (bullets.length > 0) {
+            setEditableDescription({ intro, bullets, closing });
+          } else {
+            // Fallback to simple structure
+            setEditableDescription({
+              intro: listing.description,
+              bullets: [],
+              closing: ""
+            });
+          }
+        } catch {
+          setEditableDescription({
+            intro: listing.description,
+            bullets: [],
+            closing: ""
+          });
+        }
+      }
+      
+      // Set SKU
+      if (listing.ebaySku) {
+        setGeneratedSku(listing.ebaySku);
+        setUserEditedSku(true); // Prevent auto-generation from overwriting
+      }
+      
+      // Set photos (convert URLs to display)
+      if (listing.photos && listing.photos.length > 0) {
+        setPhotoUrls(listing.photos);
+      }
+    }
+  }, [listing, listingId]);
 
   const { data: titleSuggestions, isLoading: generatingTitles } = useQuery<{
     titles: string[];
@@ -416,8 +501,13 @@ export default function DraftPage() {
 
   const publishMutation = useMutation({
     mutationFn: async () => {
-      if (!editableDescription || selectedPhotos.length < 2 || editableTitles.length === 0) {
+      // When editing, photos are optional (already on eBay)
+      if (!listingId && (!editableDescription || selectedPhotos.length < 2 || editableTitles.length === 0)) {
         throw new Error("Please add at least 2 photos");
+      }
+
+      if (!editableDescription || editableTitles.length === 0) {
+        throw new Error("Missing required fields");
       }
 
       if (!selectedCategoryId || selectedCategoryId === "0") {
@@ -440,8 +530,31 @@ export default function DraftPage() {
         allTitles: editableTitles,
         selectedTitleText,
         selectedTitleLength: selectedTitleText?.length,
+        editMode: !!listingId,
       });
 
+      // When editing, use JSON body instead of FormData (no photo uploads)
+      if (listingId) {
+        const payload = {
+          title: editableTitles[selectedTitle],
+          description: serializeDescription(editableDescription),
+          categoryId: selectedCategoryId,
+          fulfillmentPolicyId: selectedFulfillmentPolicyId,
+          priceCents: Math.round(parseFloat(price) * 100),
+          weightOz: parseFloat(weightOz),
+          dimsL: parseFloat(dimsL),
+          dimsW: parseFloat(dimsW),
+          dimsH: parseFloat(dimsH),
+        };
+
+        setPublishModalOpen(true);
+        setPublishState("loading");
+        setPublishResult(null);
+
+        return apiRequest("PUT", `/api/listings/${listingId}/edit`, payload);
+      }
+
+      // Creating new listing - use FormData for photos
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
@@ -508,21 +621,25 @@ export default function DraftPage() {
     setPhotoUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const hasPrivacyWarnings = titleSuggestions?.privacyWarnings && titleSuggestions.privacyWarnings.length > 0;
-  const hasSimilarityIssue = titleSuggestions?.similarityScore && titleSuggestions.similarityScore > 0.7;
-  const canPublish = selectedPhotos.length >= 2 && !hasPrivacyWarnings && !hasSimilarityIssue && price && weightOz;
+  const hasPrivacyWarnings = !listingId && titleSuggestions?.privacyWarnings && titleSuggestions.privacyWarnings.length > 0;
+  const hasSimilarityIssue = !listingId && titleSuggestions?.similarityScore && titleSuggestions.similarityScore > 0.7;
+  // When editing, photos are optional (already on eBay). When creating, need 2+ photos.
+  const hasRequiredPhotos = listingId ? true : selectedPhotos.length >= 2;
+  const canPublish = hasRequiredPhotos && !hasPrivacyWarnings && !hasSimilarityIssue && price && weightOz;
 
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/listings")} data-testid="button-back">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div className="flex-1">
-            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Draft Listing</h1>
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">
+              {listingId ? "Edit Listing" : "Draft Listing"}
+            </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {vineItem?.titleNorm || "Loading..."}
+              {listingId ? (listing?.title || "Loading...") : (vineItem?.titleNorm || "Loading...")}
             </p>
           </div>
         </div>
@@ -1274,7 +1391,9 @@ export default function DraftPage() {
               onClick={() => publishMutation.mutate()}
               data-testid="button-publish"
             >
-              {publishMutation.isPending ? "Publishing..." : "Approve & Publish to eBay"}
+              {publishMutation.isPending 
+                ? (listingId ? "Updating..." : "Publishing...") 
+                : (listingId ? "Update Listing" : "Approve & Publish to eBay")}
             </Button>
           </div>
         </div>

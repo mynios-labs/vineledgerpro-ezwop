@@ -3,6 +3,7 @@ import { queryClient, apiRequest, getApiErrorPayload } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useLocation } from "wouter";
 import { 
   Dialog,
   DialogContent,
@@ -66,6 +67,7 @@ type EditListingFormData = z.infer<typeof editListingSchema>;
 
 export default function ListingsPage() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [editingListing, setEditingListing] = useState<any>(null);
   const [deletingListing, setDeletingListing] = useState<any>(null);
   const [syncErrors, setSyncErrors] = useState<any[]>([]);
@@ -485,7 +487,7 @@ export default function ListingsPage() {
                   variant="outline"
                   size="sm"
                   className="flex-1"
-                  onClick={() => setEditingListing(listing)}
+                  onClick={() => setLocation(`/draft?listingId=${listing.listingId}`)}
                   data-testid={`button-edit-listing-${listing.listingId}`}
                 >
                   <Edit2 className="w-4 h-4 mr-1" />

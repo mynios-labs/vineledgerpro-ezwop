@@ -2075,6 +2075,10 @@ Output only JSON:
         useInventoryAPI = false;
       }
 
+      // Prefetch all photoSets once to avoid O(n²) lookups
+      const allPhotoSets = await db.select().from(photoSets);
+      console.log(`[Sync] Prefetched ${allPhotoSets.length} existing photo sets for deduplication`);
+
       if (!useInventoryAPI) {
         // Use Trading API to get active listings
         console.log("[Sync] Using Trading API (GetMyeBaySelling)...");
@@ -2103,6 +2107,33 @@ Output only JSON:
               console.log(`[Sync] Found existing listing: ${existing.title} (state: ${existing.state})`);
             }
 
+            // Fetch images from eBay inventory item
+            let photoSetId: string | null = null;
+            try {
+              const invItem = await ebayClient.getInventoryItem(sku);
+              const imageUrls = invItem.product?.imageUrls || [];
+              
+              if (imageUrls.length > 0) {
+                // Check if we already have a photoSet with these exact URLs to avoid duplicates
+                const urlsJson = JSON.stringify(imageUrls);
+                const matchingPhotoSet = allPhotoSets.find(ps => JSON.stringify(ps.urls) === urlsJson);
+                
+                if (matchingPhotoSet) {
+                  photoSetId = matchingPhotoSet.photoSetId;
+                  console.log(`[Sync] Reusing existing photo set (${imageUrls.length} images)`);
+                } else {
+                  const [photoSet] = await db.insert(photoSets).values({
+                    urls: imageUrls,
+                  }).returning();
+                  photoSetId = photoSet.photoSetId;
+                  allPhotoSets.push(photoSet); // Add to cache for future iterations
+                  console.log(`[Sync] Created new photo set with ${imageUrls.length} images`);
+                }
+              }
+            } catch (imageError: any) {
+              console.log(`[Sync] Could not fetch images for SKU ${sku}: ${imageError.message}`);
+            }
+
             if (!existing) {
               // Create new inventory and listing
               const [newInventory] = await db.insert(inventoryItems).values({
@@ -2111,6 +2142,7 @@ Output only JSON:
                 condition: "New",
                 quantity: item.quantity || 1,
                 privacyPassed: true,
+                photoSetId,
               }).returning();
 
               await db.insert(listings).values({
@@ -2128,8 +2160,13 @@ Output only JSON:
               console.log(`[Sync] Created: ${title} (SKU: ${sku})`);
             } else {
               // Update existing
+              const updateData: any = { source: "ebay" };
+              if (photoSetId) {
+                updateData.photoSetId = photoSetId;
+              }
+              
               await db.update(inventoryItems)
-                .set({ source: "ebay" })
+                .set(updateData)
                 .where(eq(inventoryItems.inventoryId, existing.inventoryId));
 
               const changed = existing.title !== title || existing.priceCents !== priceCents || existing.state !== state;
@@ -2190,6 +2227,35 @@ Output only JSON:
             if (offer.status === 'PUBLISHED') state = 'live';
             else if (offer.status === 'ENDED') state = 'ended';
 
+            // Fetch images from eBay inventory item
+            let photoSetId: string | null = null;
+            if (sku) {
+              try {
+                const invItem = await ebayClient.getInventoryItem(sku);
+                const imageUrls = invItem.product?.imageUrls || [];
+                
+                if (imageUrls.length > 0) {
+                  // Check if we already have a photoSet with these exact URLs to avoid duplicates
+                  const urlsJson = JSON.stringify(imageUrls);
+                  const matchingPhotoSet = allPhotoSets.find(ps => JSON.stringify(ps.urls) === urlsJson);
+                  
+                  if (matchingPhotoSet) {
+                    photoSetId = matchingPhotoSet.photoSetId;
+                    console.log(`[Sync] Reusing existing photo set (${imageUrls.length} images)`);
+                  } else {
+                    const [photoSet] = await db.insert(photoSets).values({
+                      urls: imageUrls,
+                    }).returning();
+                    photoSetId = photoSet.photoSetId;
+                    allPhotoSets.push(photoSet); // Add to cache for future iterations
+                    console.log(`[Sync] Created new photo set with ${imageUrls.length} images`);
+                  }
+                }
+              } catch (imageError: any) {
+                console.log(`[Sync] Could not fetch images for SKU ${sku}: ${imageError.message}`);
+              }
+            }
+
             // Find existing listing
             let existing = null;
             if (itemId) {
@@ -2207,6 +2273,7 @@ Output only JSON:
                 condition: "New",
                 quantity: offer.availableQuantity || 1,
                 privacyPassed: true,
+                photoSetId,
               }).returning();
 
               await db.insert(listings).values({
@@ -2224,8 +2291,13 @@ Output only JSON:
               console.log(`[Sync] Created: ${title} (SKU: ${sku})`);
             } else {
               // Update existing - ensure source is "ebay"
+              const updateData: any = { source: "ebay" };
+              if (photoSetId) {
+                updateData.photoSetId = photoSetId;
+              }
+              
               await db.update(inventoryItems)
-                .set({ source: "ebay" })
+                .set(updateData)
                 .where(eq(inventoryItems.inventoryId, existing.inventoryId));
 
               const changed = existing.title !== title || existing.priceCents !== priceCents || existing.state !== state;
