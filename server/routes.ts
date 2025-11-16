@@ -2050,7 +2050,7 @@ Output only JSON:
   // Sync all listings from eBay using centralized EbayClient
   app.post("/api/listings/sync-from-ebay", async (_req, res) => {
     try {
-      console.log("[Sync Listings] Starting sync...");
+      console.log("[Sync] Starting sync...");
       
       let created = 0;
       let updated = 0;
@@ -2062,9 +2062,26 @@ Output only JSON:
         for await (const offerBatch of ebayClient.getAllOffers()) {
         for (const offer of offerBatch) {
           try {
-            const sku = offer.sku;
+            // CRITICAL: Generate SKU if missing
+            let sku = offer.sku;
             const itemId = offer.listing?.listingId || null;
-            const title = offer.listing?.title || sku || "Untitled";
+            const offerTitle = offer.listing?.title || null;
+            
+            if (!sku && itemId) {
+              sku = `EBAY-${itemId}`;
+              console.log(`[Sync] Generated SKU from itemId: ${sku}`);
+            } else if (!sku && offerTitle) {
+              const prefix = offerTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
+              const suffix = Math.floor(1000 + Math.random() * 9000);
+              sku = `${prefix}-EZWOP-${suffix}`;
+              console.log(`[Sync] Generated SKU from title: ${sku}`);
+            } else if (!sku) {
+              const suffix = Math.floor(1000 + Math.random() * 9000);
+              sku = `ITEM-EZWOP-${suffix}`;
+              console.log(`[Sync] Generated fallback SKU: ${sku}`);
+            }
+
+            const title = offerTitle || sku || "Untitled";
             const priceCents = offer.pricingSummary?.price?.value 
               ? Math.round(parseFloat(offer.pricingSummary.price.value) * 100) 
               : 0;
@@ -2105,7 +2122,7 @@ Output only JSON:
                 lastSyncedAt: new Date(),
               });
               created++;
-              console.log(`[Sync Listings] Created: ${title} (${itemId || sku})`);
+              console.log(`[Sync] Created: ${title} (SKU: ${sku})`);
             } else {
               // Update existing - ensure source is "ebay"
               await db.update(inventoryItems)
@@ -2119,23 +2136,25 @@ Output only JSON:
                   title,
                   priceCents,
                   state,
+                  ebaySku: sku || existing.ebaySku,
                   lastSyncedAt: new Date(),
                 }).where(eq(listings.listingId, existing.listingId));
                 updated++;
-                console.log(`[Sync Listings] Updated: ${title} (${itemId || sku})`);
+                console.log(`[Sync] Updated: ${title}`);
               } else {
                 unchanged++;
               }
             }
           } catch (itemError: any) {
-            errors.push({ sku: offer.sku, error: itemError.message });
+            console.error(`[Sync] Error processing listing:`, itemError);
+            errors.push({ itemId: offer.listing?.listingId, sku: offer.sku, title: offer.listing?.title, error: itemError.message });
           }
         }
         }
       } catch (ebayError: any) {
         // Check if it's the SKU validation error from eBay
         if (ebayError.message && ebayError.message.includes('25707') && ebayError.message.includes('invalid value for a SKU')) {
-          console.error("[Sync Listings] eBay SKU validation error:", ebayError.message);
+          console.error("[Sync] eBay SKU validation error:", ebayError.message);
           return res.status(400).json({ 
             error: "eBay Account Data Issue",
             message: "Your eBay account contains one or more offers with invalid SKUs. eBay requires SKUs to be alphanumeric only and 50 characters or less. Please log into eBay Seller Hub, go to Inventory > Active Listings, and fix or remove listings with invalid SKUs, then try syncing again.",
@@ -2146,12 +2165,12 @@ Output only JSON:
         throw ebayError;
       }
 
-      console.log(`[Sync Listings] Complete: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length}`);
+      console.log(`[Sync] ✅ COMPLETE: created=${created} updated=${updated} unchanged=${unchanged} failed=${errors.length}`);
       
-      res.json({ created, updated, unchanged, failed: errors.length, errors });
+      res.json({ total: created + updated + unchanged, created, updated, unchanged, failed: errors.length, errors: errors.length > 0 ? errors : undefined });
     } catch (e: any) {
-      console.error("[Sync Listings] Fatal error:", e);
-      res.status(500).json({ error: e.message });
+      console.error("[Sync] ❌ FATAL ERROR:", e);
+      res.status(500).json({ error: e.message || "sync failed" });
     }
   });
 
