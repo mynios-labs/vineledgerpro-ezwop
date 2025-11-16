@@ -1,0 +1,227 @@
+End-to-End Testing: SKU Auto-Generation
+Execute these steps IN EXACT ORDER. Fix any errors immediately before proceeding.
+
+STEP 1: Create Listing from Inventory
+1.1 Search for Product
+Navigate to /inventory
+Type dog water in the search box
+Press Enter
+Expected: Search results appear
+
+1.2 Create Listing
+Find the FIRST item in results
+Click "Create Listing" button
+Should redirect to draft page
+Verify URL: /draft?vineItemId=vi_XXXXX
+
+STEP 2: Complete Draft Listing
+2.1 Verify SKU Auto-Generation
+Check the draft page:
+
+✅ SKU field is visible
+✅ SKU is auto-populated (format: XXXX-{32chars})
+✅ Example: DOGW-8131880ff22a4ef28805f3bd281b870b
+2.2 Fill Required Fields
+Price: Set to 29.99
+Weight: Set to 16 oz
+Fulfillment Policy: Select any available
+Category: Search "Pet Supplies", select one
+2.3 Save/Publish
+Click "Save as Draft" or "Publish" button
+
+Expected:
+
+✅ Success toast appears
+✅ Redirects to inventory or listings page
+✅ No errors in browser console
+If errors occur: Fix them before continuing
+
+STEP 3: Verify on Listings Page
+3.1 View Listing
+Navigate to /listings
+Find the newly created listing
+Expected:
+
+✅ Listing appears in grid
+✅ SKU is visible
+✅ Title matches draft
+✅ Status shows "draft" or "live"
+If NOT visible: Check console and server logs for errors
+
+STEP 4: Ensure Listings Page Uses EbayClient
+4.1 Check Current Implementation
+Open server/routes.ts and find: app.get("/api/listings"
+
+Current behavior check:
+
+Does it ONLY query database? ❌ (needs fixing)
+Does it use ebayClient? ✅ (correct)
+4.2 Update if Needed
+If the route only queries the database, UPDATE IT:
+
+app.get("/api/listings", async (_req, res) => {
+  try {
+    // Get all listings from database first
+    const dbListings = await db
+      .select()
+      .from(listings)
+      .leftJoin(inventoryItems, eq(listings.inventoryId, inventoryItems.inventoryId))
+      .orderBy(desc(listings.lastSyncedAt));
+
+    // Enrich with live eBay data for published listings
+    const enrichedListings = await Promise.all(
+      dbListings.map(async (row) => {
+        // If listing has eBay offer ID, fetch live status
+        if (row.listings.ebayOfferId) {
+          try {
+            const ebayOffer = await ebayClient.getOffer(row.listings.ebayOfferId);
+            
+            return {
+              ...row.listings,
+              inventory: row.inventory_items,
+              ebayStatus: ebayOffer.status,
+              ebayPrice: ebayOffer.pricingSummary?.price?.value,
+              isLiveOnEbay: ebayOffer.status === 'PUBLISHED',
+            };
+          } catch (error) {
+            console.warn(`[Listings] Could not fetch eBay data for ${row.listings.ebayOfferId}:`, error);
+            // Return DB data if eBay fetch fails
+            return {
+              ...row.listings,
+              inventory: row.inventory_items,
+            };
+          }
+        }
+        
+        // No eBay offer yet - return DB data
+        return {
+          ...row.listings,
+          inventory: row.inventory_items,
+        };
+      })
+    );
+
+    res.json(enrichedListings);
+  } catch (e: any) {
+    console.error("[Listings] Error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+Important: Verify ebayClient is imported:
+
+import { ebayClient } from "./lib/EbayClient";
+STEP 5: Test Sync Button
+5.1 Click Sync Now
+On /listings page
+Click "Sync now" button
+Watch for success/error toast
+5.2 Monitor Server Logs
+Expected output:
+
+[Sync] Starting sync...
+[EbayClient] GET /sell/inventory/v1/offer?marketplace_id=EBAY_US&limit=200&offset=0
+[Sync] Fetched 2 listings from eBay
+[Sync] Created: Dog Water Bowl (SKU: DOGW-8131880ff22a4ef28805f3bd281b870b)
+[Sync] ✅ COMPLETE: created=1 updated=0 unchanged=1 failed=0 total=2
+5.3 Fix Common Errors
+Error: "ebayClient is not defined"
+
+// Add to top of server/routes.ts
+import { ebayClient } from "./lib/EbayClient";
+Error: "getAllOffers is not a function"
+
+Check server/lib/EbayClient.ts exports the class
+Verify export const ebayClient = new EbayClient();
+Error: "Cannot read property 'sku' of undefined"
+
+In sync route, add: let sku = offer.sku || null;
+Add null checks before accessing nested properties
+Error: "Accept-Language header invalid"
+
+Check EbayClient.ts lines 167-168:
+headersObj.set('Accept-Language', 'en-US');
+headersObj.set('Content-Language', 'en-US');
+STEP 6: Verify Sync Results
+After sync completes:
+
+✅ Listings page refreshes automatically
+✅ New eBay listings appear (if any)
+✅ Existing listings show updated status
+✅ Listings without SKUs got auto-generated SKUs
+Check the UI:
+
+Each listing card shows SKU
+Status badges are correct ("live", "draft", etc.)
+No error messages
+STEP 7: Final Verification Commands
+Run these to confirm everything is in place:
+
+# Verify EbayClient exists
+ls -la server/lib/EbayClient.ts
+
+# Verify import in routes
+grep "import.*ebayClient" server/routes.ts
+
+# Verify sync uses ebayClient
+grep "ebayClient.getAllOffers" server/routes.ts
+
+# Verify draft page has SKU
+grep "generatedSku" client/src/pages/draft.tsx
+All should return results.
+
+STEP 8: Browser Console Check
+Open browser DevTools (F12)
+Go to Console tab
+Perform actions (create listing, sync)
+Verify: No red errors
+Check Network tab: API calls succeed (status 200)
+DELIVERABLES
+Provide these when complete:
+
+1. Screenshot: Draft Page
+Show auto-generated SKU field
+Show title and price filled
+Timestamp visible
+2. Screenshot: Listings Page
+Show the new listing card
+Show SKU on card
+Show status badge
+3. Server Logs
+Copy and paste the complete sync output:
+
+[Sync] Starting sync...
+[Sync] ✅ COMPLETE: created=X updated=Y unchanged=Z failed=0 total=N
+4. Confirmation Checklist
+✅ Listing created from inventory with auto-generated SKU
+✅ SKU visible on listings page
+✅ Listings page uses EbayClient for live data
+✅ Sync button works without errors
+✅ Server logs show successful sync
+✅ No browser console errors
+ERROR HANDLING PROTOCOL
+If ANY error occurs:
+
+Copy the EXACT error message
+Note which step it occurred
+Check:
+Server logs for stack trace
+Browser console for client errors
+Network tab for failed requests
+Fix the error
+Restart the app
+Resume testing from the failed step
+DO NOT proceed to next step until current step passes.
+
+CRITICAL RULES
+❌ Never skip verification steps
+❌ Never ignore errors "to see what happens"
+❌ Never assume tests passed without proof
+✅ Always restart app after code changes
+✅ Always check BOTH server logs AND browser console
+✅ Always provide all 4 deliverables
+BEGIN TESTING NOW.
+
+Report back with:
+
+All 4 deliverables (screenshots + logs + checklist), OR
+The first error you encounter (with full error message)

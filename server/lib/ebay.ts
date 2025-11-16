@@ -67,7 +67,7 @@ async function refreshAccessToken(): Promise<string> {
 let publicAccessToken: string | null = null;
 let publicTokenExpiry: number = 0;
 
-async function getPublicAccessToken(): Promise<string> {
+export async function getPublicAccessToken(): Promise<string> {
   // Check cached public token
   if (publicAccessToken && Date.now() < publicTokenExpiry) {
     return publicAccessToken;

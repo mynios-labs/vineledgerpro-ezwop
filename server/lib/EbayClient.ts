@@ -1,4 +1,4 @@
-import { getAccessToken } from './ebay';
+import { getAccessToken, getPublicAccessToken } from './ebay';
 
 const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
   ? "https://api.ebay.com"
@@ -124,6 +124,7 @@ interface RequestOptions {
   body?: any;
   headers?: Record<string, string>;
   requiresMarketplace?: boolean;
+  usePublicToken?: boolean;
 }
 
 // ============================================================================
@@ -145,11 +146,18 @@ export class EbayClient {
       body,
       headers: customHeaders = {},
       requiresMarketplace = true,
+      usePublicToken = false,
     } = options;
 
-    // Get fresh token
-    if (!this.token) {
-      this.token = await getAccessToken();
+    // Get appropriate token (public for Taxonomy/Commerce, user for Inventory/Sell APIs)
+    let token: string;
+    if (usePublicToken) {
+      token = await getPublicAccessToken();
+    } else {
+      if (!this.token) {
+        this.token = await getAccessToken();
+      }
+      token = this.token;
     }
 
     const url = endpoint.startsWith('http') 
@@ -159,7 +167,7 @@ export class EbayClient {
     // Build headers - CENTRALIZED HEADER LOGIC
     // Use Headers object and set proper locale headers
     const headersObj = new Headers();
-    headersObj.set('Authorization', `Bearer ${this.token}`);
+    headersObj.set('Authorization', `Bearer ${token}`);
     headersObj.set('Content-Type', 'application/json');
     headersObj.set('Accept', 'application/json');
     
@@ -484,21 +492,23 @@ export class EbayClient {
 
   /**
    * Get suggested categories for keywords
+   * Uses public API token (client credentials) for Taxonomy API
    */
   async getSuggestedCategories(keywords: string): Promise<any> {
     return this.request(
       `/commerce/taxonomy/v1/category_tree/0/get_category_suggestions?q=${encodeURIComponent(keywords)}`,
-      { requiresMarketplace: false }
+      { requiresMarketplace: false, usePublicToken: true }
     );
   }
 
   /**
    * Get category details
+   * Uses public API token (client credentials) for Taxonomy API
    */
   async getCategoryDetails(categoryId: string): Promise<any> {
     return this.request(
       `/commerce/taxonomy/v1/category_tree/0/get_category_subtree?category_id=${categoryId}`,
-      { requiresMarketplace: false }
+      { requiresMarketplace: false, usePublicToken: true }
     );
   }
 
