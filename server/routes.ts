@@ -2062,22 +2062,25 @@ Output only JSON:
         for await (const offerBatch of ebayClient.getAllOffers()) {
         for (const offer of offerBatch) {
           try {
-            // CRITICAL: Generate SKU if missing
+            // CRITICAL: Generate SKU if missing (using FULL unique IDs for guaranteed uniqueness)
             let sku = offer.sku;
             const itemId = offer.listing?.listingId || null;
             const offerTitle = offer.listing?.title || null;
+            const offerId = offer.offerId;
             
             if (!sku && itemId) {
               sku = `EBAY-${itemId}`;
               console.log(`[Sync] Generated SKU from itemId: ${sku}`);
-            } else if (!sku && offerTitle) {
+            } else if (!sku && offerTitle && offerId) {
               const prefix = offerTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
-              const suffix = Math.floor(1000 + Math.random() * 9000);
-              sku = `${prefix}-EZWOP-${suffix}`;
+              // Use FULL offerId (with hyphens removed) for guaranteed uniqueness
+              const uniqueId = offerId.replace(/-/g, '');
+              sku = `${prefix}-${uniqueId}`;
               console.log(`[Sync] Generated SKU from title: ${sku}`);
-            } else if (!sku) {
-              const suffix = Math.floor(1000 + Math.random() * 9000);
-              sku = `ITEM-EZWOP-${suffix}`;
+            } else if (!sku && offerId) {
+              // Fallback: use full offerId
+              const uniqueId = offerId.replace(/-/g, '');
+              sku = `OFFER-${uniqueId}`;
               console.log(`[Sync] Generated fallback SKU: ${sku}`);
             }
 

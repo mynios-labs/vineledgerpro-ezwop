@@ -75,6 +75,12 @@ Features include a forbidden word list, cosine similarity checks to prevent Amaz
 -   **Cancellation Tracking System:** Implemented comprehensive tracking for cancelled Amazon Vine orders, including a `cancelled` status, `orderNumber` for precise matching, and exclusion from active inventory totals for tax reconciliation.
 -   **Inventory Constraint:** Enforced a one-to-one relationship between Vine Items and Inventory Items.
 -   **Production OAuth:** Implemented refresh token support for eBay API with automatic token renewal.
+-   **SKU Auto-Generation System:** Implemented automatic SKU generation with guaranteed uniqueness across both draft listing creation and eBay sync operations:
+    -   **Format:** `{PREFIX}-{FULL_UNIQUE_ID}` where PREFIX is first 4 letters of title (uppercase, letters only) and FULL_UNIQUE_ID is the complete vineItemId/offerId (hyphens removed, ~32 chars)
+    -   **Uniqueness Guarantee:** Uses complete unique IDs directly (no truncation, no hashing/compression) - full vineItemId for drafts, full offerId for synced listings - ensuring provable uniqueness with zero collision risk
+    -   **Draft Page (client/src/pages/draft.tsx):** Auto-generates SKU when user selects or edits a title, using the complete 32-character vineItemId. Includes manual override capability with `userEditedSku` flag to prevent auto-generation after user customization. Features include input field with auto-generation indicator, helper text, and fallback title loading when AI generation fails.
+    -   **Sync Route (server/routes.ts):** Generates SKUs for eBay listings that lack them during sync operations. Priority order: (1) EBAY-{listingId} if listingId available, (2) {PREFIX}-{fullOfferId} if title available, (3) OFFER-{fullOfferId} as fallback. All use complete unique IDs directly to ensure same listing always gets same SKU.
+    -   **Publish Integration:** SKU is included in publish mutation FormData and sent to backend when creating new listings.
 
 ## External Dependencies
 

@@ -151,19 +151,25 @@ export default function DraftPage() {
     setSelectedFulfillmentPolicyName(null);
   }, [vineItemId, listingId]);
 
-  // Auto-generate SKU from title
+  // Auto-generate SKU with guaranteed uniqueness using full vineItemId
   useEffect(() => {
     if (userEditedSku) return;
+    if (!vineItemId) return;
 
     const currentTitle = editableTitles[selectedTitle];
     if (!currentTitle) return;
 
+    // Use first 4 letters of title as prefix for readability
     const prefix = currentTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
-    const suffix = Math.floor(1000 + Math.random() * 9000);
-    const sku = `${prefix}-EZWOP-${suffix}`;
+    
+    // Use the FULL vineItemId (with hyphens removed) to guarantee true uniqueness
+    // eBay allows SKUs up to 50 chars, and vineItemId is 32 hex chars (36 with hyphens)
+    const uniqueId = vineItemId.replace(/-/g, '');
+    
+    const sku = `${prefix}-${uniqueId}`;
     
     setGeneratedSku(sku);
-  }, [editableTitles, selectedTitle, userEditedSku]);
+  }, [editableTitles, selectedTitle, userEditedSku, vineItemId]);
 
   // Auto-select fulfillment policy if only one available
   useEffect(() => {
