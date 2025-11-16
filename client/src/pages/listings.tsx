@@ -69,7 +69,7 @@ export default function ListingsPage() {
   const [editingListing, setEditingListing] = useState<any>(null);
   const [deletingListing, setDeletingListing] = useState<any>(null);
   const [syncErrors, setSyncErrors] = useState<any[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("live");
   const [driftFilter, setDriftFilter] = useState<boolean | null>(null);
   const [driftDrawerListing, setDriftDrawerListing] = useState<any>(null);
 
@@ -427,7 +427,14 @@ export default function ListingsPage() {
                   )}
                 </div>
                 <div className="flex flex-col gap-1 items-end">
-                  <Badge variant={listing.state === "live" ? "default" : "secondary"}>
+                  <Badge 
+                    variant={
+                      listing.state === "live" ? "default" : 
+                      listing.state === "ended" ? "destructive" : 
+                      "secondary"
+                    }
+                    className={listing.state === "live" ? "bg-green-600 hover:bg-green-700" : ""}
+                  >
                     {listing.state}
                   </Badge>
                   {listing.ebayOfferId && (
