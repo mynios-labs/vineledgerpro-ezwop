@@ -1,0 +1,62 @@
+export class EbayClient {
+  private token: string | null = null;
+  private readonly defaultLocale = (process.env.EBAY_LOCALE || 'en-US').trim();
+
+  /**
+   * Core HTTP request handler - ALL eBay API calls go through here
+   */
+  private async request<T>(
+    endpoint: string,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const {
+      method = 'GET',
+      body,
+      headers: customHeaders = {},
+      requiresMarketplace = true,
+      usePublicToken = false,
+      tracer,
+      operationName,
+    } = options;
+
+    // Get appropriate token (public for Taxonomy/Commerce, user for Inventory/Sell APIs)
+    let token: string;
+    if (usePublicToken) {
+      token = await getPublicAccessToken();
+    } else {
+      if (!this.token) {
+        this.token = await getAccessToken();
+      }
+      token = this.token;
+    }
+
+    const url = endpoint.startsWith('http') 
+      ? endpoint 
+      : `${EBAY_API_BASE}${endpoint}`;
+
+    // Build headers - CENTRALIZED HEADER LOGIC
+    // Use Headers object and set proper locale headers
+    const headersObj = new Headers();
+    headersObj.set('Authorization', `Bearer ${token}`);
+    headersObj.set('Content-Type', 'application/json');
+    headersObj.set('Accept', 'application/json');
+
+    // Set proper locale headers - eBay requires valid BCP47 locale, not empty strings
+    if (this.defaultLocale) {
+      headersObj.set('Accept-Language', this.defaultLocale);
+      headersObj.set('Content-Language', this.defaultLocale);
+    }
+
+    // Add marketplace header for endpoints that need it
+    if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
+      headersObj.set('X-EBAY-C-MARKETPLACE-ID', MARKETPLACE_ID);
+    }
+
+    // Add custom headers if provided
+    for (const [key, value] of Object.entries(customHeaders)) {
+      // Prevent callers from overriding locale headers with empty strings
+      if ((key.toLowerCase() === 'accept-language' || key.toLowerCase() === 'content-language') && !value) {
+        continue;
+      }
+      headersObj.set(key, value);
+    }
