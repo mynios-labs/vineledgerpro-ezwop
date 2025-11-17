@@ -1744,6 +1744,8 @@ Output only JSON:
           // eBay returns parameters like: [{"name":"2","value":"Brand"}] where the field name is a single word without spaces
           // We want to extract all "value" fields which are the required field names (single words)
           const requiredFields: string[] = [];
+          console.log(`[Publish] Parsing error 25002 parameters:`, JSON.stringify(missingSpecificsError.parameters, null, 2));
+          
           if (missingSpecificsError.parameters && Array.isArray(missingSpecificsError.parameters)) {
             missingSpecificsError.parameters.forEach((param: any) => {
               // Look for parameter values that are single words (field names, not error messages)
@@ -1754,16 +1756,21 @@ Output only JSON:
                   !param.value.includes('.') &&
                   param.value.toLowerCase() !== 'item' &&
                   param.value.length > 1) {
+                console.log(`[Publish] Found field name: "${param.value}"`);
                 if (!requiredFields.includes(param.value)) {
                   requiredFields.push(param.value);
                 }
+              } else {
+                console.log(`[Publish] Skipping parameter: "${param.value}" (error message)`);
               }
             });
           }
           
           if (requiredFields.length > 0) {
             errorResponse.missingItemSpecifics = requiredFields;
-            console.log(`[Publish] Missing item specifics detected:`, requiredFields);
+            console.log(`[Publish] ✅ Will send missing item specifics to frontend:`, requiredFields);
+          } else {
+            console.log(`[Publish] ⚠️ No field names extracted from error 25002`);
           }
         }
         
