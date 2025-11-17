@@ -1,0 +1,106 @@
+ const normalizedItemSpecifics = Object.fromEntries(
+      Object.entries(overrideItemSpecifics ?? itemSpecificValues ?? {})
+        .map(([key, value]) => [key, (value || "").trim()])
+        .filter(([, value]) => value.length > 0)
+    );
+
+    // When editing, use JSON body instead of FormData (no photo uploads)
+    if (listingId) {
+      const payload = {
+        title: editableTitles[selectedTitle],
+        description: serializeDescription(editableDescription),
+        categoryId: selectedCategoryId,
+        fulfillmentPolicyId: selectedFulfillmentPolicyId,
+        priceCents: Math.round(parseFloat(price) * 100),
+        weightOz: parseFloat(weightOz),
+        dimsL: parseFloat(dimsL),
+        dimsW: parseFloat(dimsW),
+        dimsH: parseFloat(dimsH),
+        itemSpecifics: normalizedItemSpecifics,
+      };
+
+      setPublishModalOpen(true);
+      setPublishState("loading");
+      setPublishResult(null);
+
+      return apiRequest("PUT", `/api/listings/${listingId}/edit`, payload);
+    }
+
+    // Creating new listing - use FormData for photos
+    const formData = new FormData();
+    selectedPhotos.forEach((photo) => formData.append("photos", photo));
+    formData.append("vineItemId", vineItemId!);
+    formData.append("title", editableTitles[selectedTitle]);
+    formData.append("description", serializeDescription(editableDescription));
+    formData.append("categoryId", selectedCategoryId);
+    formData.append("fulfillmentPolicyId", selectedFulfillmentPolicyId);
+    formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
+    formData.append("weightOz", weightOz);
+    formData.append("dimsL", dimsL);
+    formData.append("dimsW", dimsW);
+    formData.append("dimsH", dimsH);
+    formData.append("sku", generatedSku);
+    formData.append("itemSpecifics", JSON.stringify(normalizedItemSpecifics));
+
+    // Open modal and set loading state
+    setPublishModalOpen(true);
+    setPublishState("loading");
+    setPublishResult(null);
+
+    return apiRequest("POST", "/api/listings/publish", formData);
+  },
+  onSuccess: (data: any) => {
+    setPublishState("success");
+    setPublishResult(data);
+    queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+  },
+  onError: (error: any) => {
+    setPublishState("error");
+    if (error instanceof ApiError && error.data) {
+      const missingSpecifics: string[] = error.data.missingItemSpecifics || [];
+
+      setPublishResult({
+        error: error.data.error || error.message,
+        details: error.data.details || [error.message],
+        failedStep: error.data.failedStep,
+        trace: error.data.trace,
+        ebayErrors: error.data.ebayErrors,
+        ebayErrorDetails: error.data.ebayErrorDetails,
+      });
+
+      if (missingSpecifics.length > 0) {
+        const mergedSpecifics = { ...itemSpecificValues };
+        missingSpecifics.forEach(name => {
+          if (!(name in mergedSpecifics)) {
+            mergedSpecifics[name] = "";
+          }
+        });
+        setItemSpecificValues(mergedSpecifics);
+        setMissingItemSpecifics(missingSpecifics);
+        setPublishModalOpen(false);
+        setItemSpecificsModalOpen(true);
+      }
+
+      toast({
+        title: error.data.error || "Publish failed",
+        description: (error.data.details && error.data.details[0]) || error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPublishResult({
+      error: error.message,
+      details: error.details || [error.message],
+      failedStep: error.failedStep,
+      trace: error.trace,
+    });
+    toast({
+      title: "Publish failed",
+      description: error.message,
+      variant: "destructive",
+    });
+  },
+});
+client/src/pages/draft.tsx
+Lines 632-735

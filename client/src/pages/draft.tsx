@@ -603,20 +603,8 @@ export default function DraftPage() {
     // Shipping mode will be synced automatically by the useEffect
   };
 
-  // Handle item specifics submission - merge new values and retry publish
-  const handleItemSpecificsSubmit = (newSpecifics: Record<string, string>) => {
-    // Merge new specifics with existing ones
-    setItemSpecificValues(prev => ({ ...prev, ...newSpecifics }));
-    
-    // Close modal
-    setItemSpecificsModalOpen(false);
-    
-    // Retry publish mutation
-    publishMutation.mutate();
-  };
-
   const publishMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (overrideItemSpecifics?: Record<string, string>) => {
       // When editing, photos are optional (already on eBay)
       if (!listingId && (!editableDescription || selectedPhotos.length < 2 || editableTitles.length === 0)) {
         throw new Error("Please add at least 2 photos");
@@ -649,25 +637,26 @@ export default function DraftPage() {
         editMode: !!listingId,
       });
 
+      // Normalize item specifics: use override if provided, otherwise use state
+      const normalizedItemSpecifics = Object.fromEntries(
+        Object.entries(overrideItemSpecifics ?? itemSpecificValues ?? {})
+          .map(([key, value]) => [key, (value || "").trim()])
+          .filter(([, value]) => value.length > 0)
+      );
+
       // When editing, use JSON body instead of FormData (no photo uploads)
       if (listingId) {
-        // Calculate final price to send to eBay
-        // When "Includes in Price" mode, send TOTAL (item + shipping)
-        // When "Charge Separately" mode, send item price only
-        const finalPrice = shippingMode === "included" && totalPriceInput
-          ? parseFloat(totalPriceInput)
-          : parseFloat(price);
-        
         const payload = {
           title: editableTitles[selectedTitle],
           description: serializeDescription(editableDescription),
           categoryId: selectedCategoryId,
           fulfillmentPolicyId: selectedFulfillmentPolicyId,
-          priceCents: Math.round(finalPrice * 100),
+          priceCents: Math.round(parseFloat(price) * 100),
           weightOz: parseFloat(weightOz),
           dimsL: parseFloat(dimsL),
           dimsW: parseFloat(dimsW),
           dimsH: parseFloat(dimsH),
+          itemSpecifics: normalizedItemSpecifics,
         };
 
         setPublishModalOpen(true);
@@ -698,19 +687,7 @@ export default function DraftPage() {
       formData.append("dimsW", dimsW);
       formData.append("dimsH", dimsH);
       formData.append("sku", generatedSku);
-      
-      // Convert itemSpecificValues (Record<string, string>) to eBay format (Record<string, string[]>)
-      const normalizedSpecifics: Record<string, string[]> = {};
-      for (const [key, value] of Object.entries(itemSpecificValues)) {
-        if (value && value.trim()) {
-          normalizedSpecifics[key] = [value.trim()];
-        }
-      }
-      
-      // Include item specifics if provided
-      if (Object.keys(normalizedSpecifics).length > 0) {
-        formData.append("itemSpecifics", JSON.stringify(normalizedSpecifics));
-      }
+      formData.append("itemSpecifics", JSON.stringify(normalizedItemSpecifics));
 
       // Open modal and set loading state
       setPublishModalOpen(true);
@@ -727,14 +704,7 @@ export default function DraftPage() {
     onError: (error: any) => {
       setPublishState("error");
       if (error instanceof ApiError && error.data) {
-        // Check if eBay returned missing item specifics error
-        if (error.data.missingItemSpecifics && error.data.missingItemSpecifics.length > 0) {
-          // Close publish modal and show item specifics modal
-          setPublishModalOpen(false);
-          setMissingItemSpecifics(error.data.missingItemSpecifics);
-          setItemSpecificsModalOpen(true);
-          return;
-        }
+        const missingSpecifics: string[] = error.data.missingItemSpecifics || [];
 
         setPublishResult({
           error: error.data.error || error.message,
@@ -744,6 +714,20 @@ export default function DraftPage() {
           ebayErrors: error.data.ebayErrors,
           ebayErrorDetails: error.data.ebayErrorDetails,
         });
+
+        if (missingSpecifics.length > 0) {
+          // Merge missing fields with existing values
+          const mergedSpecifics = { ...itemSpecificValues };
+          missingSpecifics.forEach(name => {
+            if (!(name in mergedSpecifics)) {
+              mergedSpecifics[name] = "";
+            }
+          });
+          setItemSpecificValues(mergedSpecifics);
+          setMissingItemSpecifics(missingSpecifics);
+          setPublishModalOpen(false);
+          setItemSpecificsModalOpen(true);
+        }
 
         toast({
           title: error.data.error || "Publish failed",
@@ -1560,7 +1544,7 @@ export default function DraftPage() {
               className="w-full mt-4"
               size="lg"
               disabled={!canPublish || publishMutation.isPending}
-              onClick={() => publishMutation.mutate()}
+              onClick={() => publishMutation.mutate(undefined)}
               data-testid="button-publish"
             >
               {publishMutation.isPending 
@@ -1593,10 +1577,14 @@ export default function DraftPage() {
         requiredSpecifics={missingItemSpecifics}
         currentValues={itemSpecificValues}
         isSubmitting={publishMutation.isPending}
-        onSubmit={handleItemSpecificsSubmit}
         onCancel={() => {
           setItemSpecificsModalOpen(false);
           setPublishState("idle");
+        }}
+        onSubmit={(values) => {
+          setItemSpecificValues(values);
+          setItemSpecificsModalOpen(false);
+          publishMutation.mutate(values);
         }}
       />
     </div>
