@@ -1,0 +1,76 @@
+Publish Failed
+There was an error publishing your listing.
+
+Get offers failed: 400 - {"errors":[{"errorId":25709,"domain":"API_INVENTORY","subdomain":"Selling","category":"Request","message":"Invalid value for header Accept-Language."}]}
+
+eBay Error Details:
+[25709]
+Invalid value for header Accept-Language.
+Failed at: Get existing offers
+
+
+Complete eBay Error Response
+{
+  "errors": [
+    {
+      "errorId": 25709,
+      "domain": "API_INVENTORY",
+      "subdomain": "Selling",
+      "category": "Request",
+      "message": "Invalid value for header Accept-Language."
+    }
+  ]
+}
+
+API Trace (1 steps)
+Get existing offers
+Failed
+GET https://api.ebay.com/sell/inventory/v1/offer?sku=ITEM-b99ebd9f-036c-4941-a122-9dbbefc9007e&marketplace_id=EBAY_US
+147ms
+400
+Request Headers:
+{
+  "Authorization": "[REDACTED]",
+  "Content-Type": "application/json"
+}
+Request Body:
+N/A
+Response Headers:
+{
+  "accept-ranges": "bytes",
+  "cache-control": "no-cache, no-store, max-age=0, must-revalidate",
+  "connection": "keep-alive",
+  "content-length": "152",
+  "content-type": "application/json",
+  "date": "Mon, 17 Nov 2025 19:10:27 GMT",
+  "expires": "0",
+  "pragma": "no-cache",
+  "rlogid": "t6pitnmsgwj70dlkr%3D9vjujkpfsl41%60jhs.%3D22e0%60de%3D1*w%60ut222*sm%3F%7Fo-19a9339c239-0x232a",
+  "server": "ebay-proxy-server",
+  "strict-transport-security": "max-age=31557600",
+  "via": "1.1 varnish",
+  "x-cache": "MISS, MISS",
+  "x-cache-hits": "0, 0",
+  "x-cdn": "Fastly",
+  "x-content-type-options": "nosniff",
+  "x-ebay-pop-id": "UFES2-SLCAZ03-api",
+  "x-envoy-upstream-service-time": "52",
+  "x-frame-options": "DENY",
+  "x-served-by": "cache-bfi-kbfi7400116-BFI, cache-bfi-kbfi7400116-BFI",
+  "x-timer": "S1763406627.336610,VS0,VE137",
+  "x-xss-protection": "0"
+}
+Response Body:
+{
+  "errors": [
+    {
+      "errorId": 25709,
+      "domain": "API_INVENTORY",
+      "subdomain": "Selling",
+      "category": "Request",
+      "message": "Invalid value for header Accept-Language."
+    }
+  ]
+}
+Error:
+Get offers failed: 400 - {"errors":[{"errorId":25709,"domain":"API_INVENTORY","subdomain":"Selling","category":"Request","message":"Invalid value for header Accept-Language."}]}

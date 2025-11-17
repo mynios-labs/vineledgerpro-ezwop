@@ -575,11 +575,15 @@ export async function getOffersBySku(sku: string, marketplaceId: string = "EBAY_
   const token = await getAccessToken();
   const url = `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`;
   
+  const defaultLocale = (process.env.EBAY_LOCALE || 'en-US').trim();
+  
   const requestInit: RequestInit = {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "Accept-Language": defaultLocale,
+      "Content-Language": defaultLocale,
     },
   };
 
