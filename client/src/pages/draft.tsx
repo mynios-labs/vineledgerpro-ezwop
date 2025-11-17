@@ -14,7 +14,6 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
 import type { VineItem, Listing } from "@shared/schema";
 import { PublishModal } from "@/components/PublishModal";
-import { ItemSpecificsModal } from "@/components/ItemSpecificsModal";
 import {
   Select,
   SelectContent,
@@ -22,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type StructuredDescription = {
   intro: string;
@@ -72,6 +72,92 @@ function findPolicyForShippingMode(
   return match || null;
 }
 
+type ItemSpecificsModalProps = {
+  isOpen: boolean;
+  requiredSpecifics: string[];
+  currentValues: Record<string, string>;
+  isSubmitting: boolean;
+  onSubmit: (values: Record<string, string>) => void;
+  onCancel: () => void;
+};
+
+function ItemSpecificsModal({
+  isOpen,
+  requiredSpecifics,
+  currentValues,
+  isSubmitting,
+  onSubmit,
+  onCancel,
+}: ItemSpecificsModalProps) {
+  const [localValues, setLocalValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const merged: Record<string, string> = { ...currentValues };
+    for (const name of requiredSpecifics) {
+      if (!(name in merged)) {
+        merged[name] = "";
+      }
+    }
+    setLocalValues(merged);
+  }, [isOpen, requiredSpecifics, currentValues]);
+
+  const hasMissing = requiredSpecifics.length > 0;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onCancel}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Additional details required by eBay</DialogTitle>
+          <DialogDescription>
+            {hasMissing
+              ? "This category requires extra item specifics before eBay will publish your listing. Please fill in the fields below and continue."
+              : "Provide any required item specifics to continue."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {requiredSpecifics.map((name) => (
+            <div key={name} className="space-y-1">
+              <Label htmlFor={`specific-${name}`}>{name}</Label>
+              <Input
+                id={`specific-${name}`}
+                value={localValues[name] || ""}
+                placeholder={`Enter ${name}`}
+                onChange={(e) =>
+                  setLocalValues(prev => ({
+                    ...prev,
+                    [name]: e.target.value,
+                  }))
+                }
+              />
+            </div>
+          ))}
+
+          {requiredSpecifics.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No specific fields were provided, but you can supply custom item specifics if needed.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:justify-end">
+          <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onSubmit(localValues)}
+            disabled={isSubmitting || requiredSpecifics.some(name => !(localValues[name] || "").trim())}
+          >
+            {isSubmitting ? "Submitting..." : "Continue"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function DraftPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -107,9 +193,9 @@ export default function DraftPage() {
   const [publishResult, setPublishResult] = useState<any>(null);
   const [generatedSku, setGeneratedSku] = useState<string>("");
   const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
-  const [showSpecificsModal, setShowSpecificsModal] = useState(false);
-  const [requiredSpecificsFields, setRequiredSpecificsFields] = useState<string[]>([]);
-  const [itemSpecifics, setItemSpecifics] = useState<Record<string, string[]>>({});
+  const [itemSpecificValues, setItemSpecificValues] = useState<Record<string, string>>({});
+  const [missingItemSpecifics, setMissingItemSpecifics] = useState<string[]>([]);
+  const [itemSpecificsModalOpen, setItemSpecificsModalOpen] = useState(false);
 
   const { data: listing } = useQuery<any>({
     queryKey: [`/api/listings/${listingId}`],
@@ -248,6 +334,9 @@ export default function DraftPage() {
       setCategorySearch("");
       setSelectedFulfillmentPolicyId(null);
       setSelectedFulfillmentPolicyName(null);
+      setItemSpecificValues({});
+      setMissingItemSpecifics([]);
+      setItemSpecificsModalOpen(false);
     }
   }, [vineItemId, listingId]);
 
@@ -514,6 +603,18 @@ export default function DraftPage() {
     // Shipping mode will be synced automatically by the useEffect
   };
 
+  // Handle item specifics submission - merge new values and retry publish
+  const handleItemSpecificsSubmit = (newSpecifics: Record<string, string>) => {
+    // Merge new specifics with existing ones
+    setItemSpecificValues(prev => ({ ...prev, ...newSpecifics }));
+    
+    // Close modal
+    setItemSpecificsModalOpen(false);
+    
+    // Retry publish mutation
+    publishMutation.mutate();
+  };
+
   const publishMutation = useMutation({
     mutationFn: async () => {
       // When editing, photos are optional (already on eBay)
@@ -598,9 +699,17 @@ export default function DraftPage() {
       formData.append("dimsH", dimsH);
       formData.append("sku", generatedSku);
       
+      // Convert itemSpecificValues (Record<string, string>) to eBay format (Record<string, string[]>)
+      const normalizedSpecifics: Record<string, string[]> = {};
+      for (const [key, value] of Object.entries(itemSpecificValues)) {
+        if (value && value.trim()) {
+          normalizedSpecifics[key] = [value.trim()];
+        }
+      }
+      
       // Include item specifics if provided
-      if (Object.keys(itemSpecifics).length > 0) {
-        formData.append("itemSpecifics", JSON.stringify(itemSpecifics));
+      if (Object.keys(normalizedSpecifics).length > 0) {
+        formData.append("itemSpecifics", JSON.stringify(normalizedSpecifics));
       }
 
       // Open modal and set loading state
@@ -622,8 +731,8 @@ export default function DraftPage() {
         if (error.data.missingItemSpecifics && error.data.missingItemSpecifics.length > 0) {
           // Close publish modal and show item specifics modal
           setPublishModalOpen(false);
-          setRequiredSpecificsFields(error.data.missingItemSpecifics);
-          setShowSpecificsModal(true);
+          setMissingItemSpecifics(error.data.missingItemSpecifics);
+          setItemSpecificsModalOpen(true);
           return;
         }
 
@@ -680,15 +789,6 @@ export default function DraftPage() {
     setSelectedPhotos((prev) => prev.filter((_, i) => i !== index));
     URL.revokeObjectURL(photoUrls[index]);
     setPhotoUrls((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleItemSpecificsSubmit = (specifics: Record<string, string[]>) => {
-    // Save specifics to state
-    setItemSpecifics(specifics);
-    setShowSpecificsModal(false);
-    
-    // Retry publish with the specifics
-    publishMutation.mutate();
   };
 
   const hasPrivacyWarnings = !listingId && titleSuggestions?.privacyWarnings && titleSuggestions.privacyWarnings.length > 0;
@@ -1489,11 +1589,15 @@ export default function DraftPage() {
 
       {/* Item Specifics Modal */}
       <ItemSpecificsModal
-        isOpen={showSpecificsModal}
-        onClose={() => setShowSpecificsModal(false)}
-        requiredFields={requiredSpecificsFields}
-        onSubmit={handleItemSpecificsSubmit}
+        isOpen={itemSpecificsModalOpen}
+        requiredSpecifics={missingItemSpecifics}
+        currentValues={itemSpecificValues}
         isSubmitting={publishMutation.isPending}
+        onSubmit={handleItemSpecificsSubmit}
+        onCancel={() => {
+          setItemSpecificsModalOpen(false);
+          setPublishState("idle");
+        }}
       />
     </div>
   );

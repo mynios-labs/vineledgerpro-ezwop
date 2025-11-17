@@ -1,0 +1,468 @@
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { ArrowLeft, Upload, X, AlertTriangle, CheckCircle, Sparkles, RefreshCw, Edit2, Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
+import { ApiError, apiRequest, queryClient } from "@/lib/queryClient";
+import type { VineItem, Listing } from "@shared/schema";
+import { PublishModal } from "@/components/PublishModal";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+type StructuredDescription = {
+  intro: string;
+  bullets: string[];
+  closing: string;
+};
+
+// Helper: Convert structured description to eBay-formatted plaintext
+function serializeDescription(desc: StructuredDescription): string {
+  const bulletList = desc.bullets.map(b => `• ${b}`).join('\n');
+  return `${desc.intro}\n\n${bulletList}\n\n${desc.closing}`;
+}
+
+// Helper: Check if title exceeds eBay's 80-character limit
+function isTitleOverLimit(title: string): boolean {
+  return title.length > 80;
+}
+
+// Helper: Infer shipping mode from fulfillment policy name
+function inferShippingModeFromPolicy(policyName: string | null): "separate" | "included" {
+  if (!policyName) return "separate";
+  const lowerName = policyName.toLowerCase();
+  if (lowerName.includes("free") && lowerName.includes("shipping")) {
+    return "included";
+  }
+  if (lowerName.includes("buyer") && lowerName.includes("pay")) {
+    return "separate";
+  }
+  return "separate"; // Default
+}
+
+// Helper: Find matching policy for shipping mode
+function findPolicyForShippingMode(
+  policies: Array<{ fulfillmentPolicyId: string; name: string }> | undefined,
+  mode: "separate" | "included"
+): { fulfillmentPolicyId: string; name: string } | null {
+  if (!policies || policies.length === 0) return null;
+  
+  const targetKeywords = mode === "included" 
+    ? ["free", "shipping"]
+    : ["buyer", "pay"];
+  
+  const match = policies.find(p => {
+    const lowerName = p.name.toLowerCase();
+    return targetKeywords.every(kw => lowerName.includes(kw));
+  });
+  
+  return match || null;
+}
+
+type ItemSpecificsModalProps = {
+  isOpen: boolean;
+  requiredSpecifics: string[];
+  currentValues: Record<string, string>;
+  isSubmitting: boolean;
+  onSubmit: (values: Record<string, string>) => void;
+  onCancel: () => void;
+};
+
+function ItemSpecificsModal({
+  isOpen,
+  requiredSpecifics,
+  currentValues,
+  isSubmitting,
+  onSubmit,
+  onCancel,
+}: ItemSpecificsModalProps) {
+  const [localValues, setLocalValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const merged: Record<string, string> = { ...currentValues };
+    for (const name of requiredSpecifics) {
+      if (!(name in merged)) {
+        merged[name] = "";
+      }
+    }
+    setLocalValues(merged);
+  }, [isOpen, requiredSpecifics, currentValues]);
+
+  const hasMissing = requiredSpecifics.length > 0;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onCancel}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Additional details required by eBay</DialogTitle>
+          <DialogDescription>
+            {hasMissing
+              ? "This category requires extra item specifics before eBay will publish your listing. Please fill in the fields below and continue."
+              : "Provide any required item specifics to continue."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {requiredSpecifics.map((name) => (
+            <div key={name} className="space-y-1">
+              <Label htmlFor={`specific-${name}`}>{name}</Label>
+              <Input
+                id={`specific-${name}`}
+                value={localValues[name] || ""}
+                placeholder={`Enter ${name}`}
+                onChange={(e) =>
+                  setLocalValues(prev => ({
+                    ...prev,
+                    [name]: e.target.value,
+                  }))
+                }
+              />
+            </div>
+          ))}
+
+          {requiredSpecifics.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No specific fields were provided, but you can supply custom item specifics if needed.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:justify-end">
+          <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onSubmit(localValues)}
+            disabled={isSubmitting || requiredSpecifics.some(name => !(localValues[name] || "").trim())}
+          >
+            {isSubmitting ? "Submitting..." : "Continue"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default function DraftPage() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const params = new URLSearchParams(window.location.search);
+  const vineItemId = params.get("vineItemId");
+  const listingId = params.get("listingId");
+
+  const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
+  const [selectedTitle, setSelectedTitle] = useState<number>(0);
+  const [editableTitles, setEditableTitles] = useState<string[]>([]);
+  const [price, setPrice] = useState("");
+  const [weightOz, setWeightOz] = useState("");
+  const [dimsL, setDimsL] = useState("");
+  const [dimsW, setDimsW] = useState("");
+  const [dimsH, setDimsH] = useState("");
+  const [regenerateCount, setRegenerateCount] = useState(0);
+  const [shippingEstimate, setShippingEstimate] = useState<{ low: number; high: number } | null>(null);
+  const [editingTitleIndex, setEditingTitleIndex] = useState<number | null>(null);
+  const [hoveredTitleIndex, setHoveredTitleIndex] = useState<number | null>(null);
+  const [shippingMode, setShippingMode] = useState<"separate" | "included">("separate");
+  const [totalPriceInput, setTotalPriceInput] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
+  const [categorySearch, setCategorySearch] = useState<string>("");
+  const [debouncedCategorySearch, setDebouncedCategorySearch] = useState<string>("");
+  const [userOverrodeCategory, setUserOverrodeCategory] = useState<boolean>(false);
+  const [editableDescription, setEditableDescription] = useState<StructuredDescription | null>(null);
+  const [selectedFulfillmentPolicyId, setSelectedFulfillmentPolicyId] = useState<string | null>(null);
+  const [selectedFulfillmentPolicyName, setSelectedFulfillmentPolicyName] = useState<string | null>(null);
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [publishState, setPublishState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [publishResult, setPublishResult] = useState<any>(null);
+  const [generatedSku, setGeneratedSku] = useState<string>("");
+  const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
+  const [itemSpecificValues, setItemSpecificValues] = useState<Record<string, string>>({});
+  const [missingItemSpecifics, setMissingItemSpecifics] = useState<string[]>([]);
+  const [itemSpecificsModalOpen, setItemSpecificsModalOpen] = useState(false);
+
+  const { data: vineItem } = useQuery<VineItem>({
+    queryKey: [`/api/vine-items/${vineItemId}`],
+    enabled: !!vineItemId,
+  });
+
+  const { data: listing } = useQuery<any>({
+    queryKey: [`/api/listings/${listingId}`],
+    enabled: !!listingId,
+  });
+
+  // Pre-populate form when editing an existing listing
+  useEffect(() => {
+    if (listing && listingId) {
+      console.log("[EDIT MODE] Pre-populating form with listing data:", listing);
+      
+      // Set title
+      if (listing.title && editableTitles.length === 0) {
+        setEditableTitles([listing.title]);
+        setSelectedTitle(0);
+      }
+      
+      // Set price
+      if (listing.priceCents) {
+        setPrice((listing.priceCents / 100).toString());
+@@ -214,50 +304,53 @@ export default function DraftPage() {
+    queryKey: [`/api/listings/generate-copy?vineItemId=${vineItemId}&_refresh=${regenerateCount}`],
+    enabled: !!vineItemId,
+    staleTime: 0,
+  });
+
+  // Fulfillment policies
+  const { data: fulfillmentPolicies, isLoading: loadingPolicies, error: policiesError } = useQuery<Array<{
+    fulfillmentPolicyId: string;
+    name: string;
+    shippingOptions?: Array<{ shippingServiceCode?: string }>;
+  }>>({
+    queryKey: ["/api/ebay/fulfillment-policies"],
+    staleTime: 15 * 60 * 1000, // 15 minutes (matches backend cache)
+  });
+
+  // Reset category and fulfillment policy state when switching to a different item
+  // Only reset when creating (vineItemId), not when editing (listingId)
+  useEffect(() => {
+    if (!listingId) {
+      setSelectedCategoryId(null);
+      setSelectedCategoryName(null);
+      setUserOverrodeCategory(false);
+      setCategorySearch("");
+      setSelectedFulfillmentPolicyId(null);
+      setSelectedFulfillmentPolicyName(null);
+      setItemSpecificValues({});
+      setMissingItemSpecifics([]);
+      setItemSpecificsModalOpen(false);
+    }
+  }, [vineItemId, listingId]);
+
+  // Auto-generate SKU with guaranteed uniqueness using full vineItemId
+  useEffect(() => {
+    if (userEditedSku) return;
+    if (!vineItemId) return;
+
+    const currentTitle = editableTitles[selectedTitle];
+    if (!currentTitle) return;
+
+    // Use first 4 letters of title as prefix for readability
+    const prefix = currentTitle.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ITEM';
+    
+    // Use the FULL vineItemId (with hyphens removed) to guarantee true uniqueness
+    // eBay allows SKUs up to 50 chars, and vineItemId is 32 hex chars (36 with hyphens)
+    const uniqueId = vineItemId.replace(/-/g, '');
+    
+    const sku = `${prefix}-${uniqueId}`;
+    
+    setGeneratedSku(sku);
+  }, [editableTitles, selectedTitle, userEditedSku, vineItemId]);
+
+  // Auto-select fulfillment policy if only one available
+  useEffect(() => {
+@@ -514,110 +607,133 @@ export default function DraftPage() {
+      }
+
+      if (!selectedCategoryId || selectedCategoryId === "0") {
+        throw new Error("Please select a valid category");
+      }
+
+      if (!selectedFulfillmentPolicyId) {
+        throw new Error("Please select a fulfillment policy");
+      }
+
+      // Validate title length (eBay limit is 80 characters)
+      const selectedTitleText = editableTitles[selectedTitle];
+      if (!selectedTitleText || selectedTitleText.length > 80) {
+        throw new Error("Title must be between 1 and 80 characters. Please select a different title.");
+      }
+
+      // DEBUG: Log title selection details
+      console.log("[PUBLISH DEBUG] Title selection:", {
+        selectedTitleIndex: selectedTitle,
+        allTitles: editableTitles,
+        selectedTitleText,
+        selectedTitleLength: selectedTitleText?.length,
+        editMode: !!listingId,
+      });
+
+      const normalizedItemSpecifics = Object.fromEntries(
+        Object.entries(itemSpecificValues || {})
+          .map(([key, value]) => [key, (value || "").trim()])
+          .filter(([, value]) => value.length > 0)
+      );
+
+      // When editing, use JSON body instead of FormData (no photo uploads)
+      if (listingId) {
+        const payload = {
+          title: editableTitles[selectedTitle],
+          description: serializeDescription(editableDescription),
+          categoryId: selectedCategoryId,
+          fulfillmentPolicyId: selectedFulfillmentPolicyId,
+          priceCents: Math.round(parseFloat(price) * 100),
+          weightOz: parseFloat(weightOz),
+          dimsL: parseFloat(dimsL),
+          dimsW: parseFloat(dimsW),
+          dimsH: parseFloat(dimsH),
+          itemSpecifics: normalizedItemSpecifics,
+        };
+
+        setPublishModalOpen(true);
+        setPublishState("loading");
+        setPublishResult(null);
+
+        return apiRequest("PUT", `/api/listings/${listingId}/edit`, payload);
+      }
+
+      // Creating new listing - use FormData for photos
+      const formData = new FormData();
+      selectedPhotos.forEach((photo) => formData.append("photos", photo));
+      formData.append("vineItemId", vineItemId!);
+      formData.append("title", editableTitles[selectedTitle]);
+      formData.append("description", serializeDescription(editableDescription));
+      formData.append("categoryId", selectedCategoryId);
+      formData.append("fulfillmentPolicyId", selectedFulfillmentPolicyId);
+      formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
+      formData.append("weightOz", weightOz);
+      formData.append("dimsL", dimsL);
+      formData.append("dimsW", dimsW);
+      formData.append("dimsH", dimsH);
+      formData.append("sku", generatedSku);
+      formData.append("itemSpecifics", JSON.stringify(normalizedItemSpecifics));
+
+      // Open modal and set loading state
+      setPublishModalOpen(true);
+      setPublishState("loading");
+      setPublishResult(null);
+
+      return apiRequest("POST", "/api/listings/publish", formData);
+    },
+    onSuccess: (data: any) => {
+      setPublishState("success");
+      setPublishResult(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+    },
+    onError: (error: any) => {
+      setPublishState("error");
+      if (error instanceof ApiError && error.data) {
+        const missingSpecifics: string[] = error.data.missingItemSpecifics || [];
+
+        setPublishResult({
+          error: error.data.error || error.message,
+          details: error.data.details || [error.message],
+          failedStep: error.data.failedStep,
+          trace: error.data.trace,
+          ebayErrors: error.data.ebayErrors,
+          ebayErrorDetails: error.data.ebayErrorDetails,
+        });
+
+        if (missingSpecifics.length > 0) {
+          const mergedSpecifics = { ...itemSpecificValues };
+          missingSpecifics.forEach(name => {
+            if (!(name in mergedSpecifics)) {
+              mergedSpecifics[name] = "";
+            }
+          });
+          setItemSpecificValues(mergedSpecifics);
+          setMissingItemSpecifics(missingSpecifics);
+          setPublishModalOpen(false);
+          setItemSpecificsModalOpen(true);
+        }
+
+        toast({
+          title: error.data.error || "Publish failed",
+          description: (error.data.details && error.data.details[0]) || error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setPublishResult({
+        error: error.message,
+        details: error.details || [error.message],
+        failedStep: error.failedStep,
+        trace: error.trace,
+      });
+      toast({
+        title: "Publish failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (selectedPhotos.length + files.length > 12) {
+@@ -1398,43 +1514,56 @@ export default function DraftPage() {
+                          )}
+                          <p>{editableDescription.closing}</p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Button
+              className="w-full mt-4"
+              size="lg"
+              disabled={!canPublish || publishMutation.isPending}
+              onClick={() => publishMutation.mutate()}
+              data-testid="button-publish"
+            >
+              {publishMutation.isPending 
+                ? (listingId ? "Updating..." : "Publishing...") 
+                : (listingId ? "Update Listing" : "Approve & Publish to eBay")}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <ItemSpecificsModal
+        isOpen={itemSpecificsModalOpen}
+        requiredSpecifics={missingItemSpecifics}
+        currentValues={itemSpecificValues}
+        isSubmitting={publishMutation.isPending}
+        onCancel={() => setItemSpecificsModalOpen(false)}
+        onSubmit={(values) => {
+          setItemSpecificValues(values);
+          setItemSpecificsModalOpen(false);
+          publishMutation.mutate();
+        }}
+      />
+
+      {/* Publish Modal */}
+      <PublishModal
+        isOpen={publishModalOpen}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishState("idle");
+          setPublishResult(null);
+          // Navigate to orders page on success
+          if (publishState === "success") {
+            setLocation("/orders");
+          }
+        }}
+        publishState={publishState}
+        result={publishResult}
+      />
+    </div>
+  );
+}

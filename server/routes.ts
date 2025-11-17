@@ -123,6 +123,84 @@ function validateListingData(data: {
   return errors;
 }
 
+// Helper: Normalize item specifics from request body
+function normalizeItemSpecifics(raw: any): Record<string, string[]> {
+  if (!raw) return {};
+
+  let parsed = raw;
+
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.warn("[ItemSpecifics] Failed to parse JSON payload:", err);
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const normalized: Record<string, string[]> = {};
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (value === undefined || value === null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    const cleaned = values
+      .map(v => (v === undefined || v === null ? "" : String(v).trim()))
+      .filter(Boolean);
+
+    if (cleaned.length > 0) {
+      normalized[key] = cleaned;
+    }
+  }
+
+  return normalized;
+}
+
+// Helper: Extract missing item specifics field names from eBay error response
+function extractMissingItemSpecifics(ebayErrorResponse: any): string[] {
+  const missing = new Set<string>();
+
+  if (!ebayErrorResponse?.errors || !Array.isArray(ebayErrorResponse.errors)) {
+    return [];
+  }
+
+  for (const err of ebayErrorResponse.errors) {
+    const messageText = (err.message || err.longMessage || "").toLowerCase();
+    const isMissingSpecific =
+      err.errorId === 25002 ||
+      messageText.includes("item specific") ||
+      messageText.includes("specifics");
+
+    if (!isMissingSpecific) continue;
+
+    // Extract from parameters array
+    if (Array.isArray(err.parameters)) {
+      for (const param of err.parameters) {
+        const value = (param.value || "").toString().replace(/\"|'/g, "").trim();
+
+        if (!value) continue;
+
+        // Field names are single words without spaces
+        if (!value.includes(' ') && !value.includes('.') && value.toLowerCase() !== 'item') {
+          missing.add(value);
+        }
+      }
+    }
+
+    // Also try regex extraction from message
+    const match = /item specific\s+\"?([^\"]+)\"?\s+is missing/.exec(
+      err.message || err.longMessage || ""
+    );
+
+    if (match?.[1]) {
+      missing.add(match[1].trim());
+    }
+  }
+
+  return Array.from(missing);
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get vine items stats
   app.get("/api/vine-items/stats", async (_req, res) => {
@@ -1237,18 +1315,10 @@ Output only JSON:
         dimsW,
         dimsH,
         fulfillmentPolicyId,
-        itemSpecifics, // Optional JSON string of item specifics
+        itemSpecifics,
       } = req.body;
 
-      // Parse item specifics if provided
-      let parsedItemSpecifics: Record<string, string[]> | undefined;
-      if (itemSpecifics) {
-        try {
-          parsedItemSpecifics = JSON.parse(itemSpecifics);
-        } catch (e) {
-          console.error("[Publish] Failed to parse itemSpecifics:", e);
-        }
-      }
+      const parsedItemSpecifics = normalizeItemSpecifics(itemSpecifics);
 
       // Validate all required fields before processing
       const photoCount = (req.files as Express.Multer.File[])?.length || 0;
@@ -1740,44 +1810,11 @@ Output only JSON:
         errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
         errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
         
-        // Check for missing item specifics error (25002)
-        const missingSpecificsError = ebayErrorResponse.errors.find((err: any) => 
-          err.errorId === 25002 || err.errorId === '25002'
-        );
-        
-        if (missingSpecificsError) {
-          // Extract required field names from error parameters
-          // eBay returns parameters like: [{"name":"2","value":"Brand"}] where the field name is a single word without spaces
-          // We want to extract all "value" fields which are the required field names (single words)
-          const requiredFields: string[] = [];
-          console.log(`[Publish] Parsing error 25002 parameters:`, JSON.stringify(missingSpecificsError.parameters, null, 2));
-          
-          if (missingSpecificsError.parameters && Array.isArray(missingSpecificsError.parameters)) {
-            missingSpecificsError.parameters.forEach((param: any) => {
-              // Look for parameter values that are single words (field names, not error messages)
-              // Field names don't contain spaces, periods, or the word "item"
-              if (param.value && 
-                  typeof param.value === 'string' &&
-                  !param.value.includes(' ') && 
-                  !param.value.includes('.') &&
-                  param.value.toLowerCase() !== 'item' &&
-                  param.value.length > 1) {
-                console.log(`[Publish] Found field name: "${param.value}"`);
-                if (!requiredFields.includes(param.value)) {
-                  requiredFields.push(param.value);
-                }
-              } else {
-                console.log(`[Publish] Skipping parameter: "${param.value}" (error message)`);
-              }
-            });
-          }
-          
-          if (requiredFields.length > 0) {
-            errorResponse.missingItemSpecifics = requiredFields;
-            console.log(`[Publish] ✅ Will send missing item specifics to frontend:`, requiredFields);
-          } else {
-            console.log(`[Publish] ⚠️ No field names extracted from error 25002`);
-          }
+        // Extract missing item specifics using helper function
+        const missingItemSpecifics = extractMissingItemSpecifics(ebayErrorResponse);
+        if (missingItemSpecifics.length > 0) {
+          errorResponse.missingItemSpecifics = missingItemSpecifics;
+          console.log(`[Publish] ✅ Missing item specifics detected:`, missingItemSpecifics);
         }
         
         // Create human-readable summary

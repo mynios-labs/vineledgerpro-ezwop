@@ -1,0 +1,473 @@
+@@ -96,54 +96,128 @@ function truncateTitle(title: string, maxLength: number = 80): string {
+function validateListingData(data: {
+  title: string;
+  description: string;
+  categoryId: string;
+  photos?: number;
+}): string[] {
+  const errors: string[] = [];
+  
+  if (!data.title || data.title.trim().length === 0) {
+    errors.push("Title is required");
+  } else if (data.title.length > 80) {
+    errors.push(`Title is too long (${data.title.length}/80 chars)`);
+  }
+  
+  if (!data.description || data.description.trim().length === 0) {
+    errors.push("Description is required");
+  }
+  
+  if (!data.categoryId || data.categoryId === "0") {
+    errors.push("Valid category is required");
+  }
+  
+  if (data.photos !== undefined && data.photos < 2) {
+    errors.push("At least 2 photos are required");
+  }
+  
+
+  return errors;
+}
+
+function normalizeItemSpecifics(raw: any): Record<string, string[]> {
+  if (!raw) return {};
+
+  let parsed = raw;
+
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.warn("[ItemSpecifics] Failed to parse JSON payload:", err);
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const normalized: Record<string, string[]> = {};
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (value === undefined || value === null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    const cleaned = values
+      .map(v => (v === undefined || v === null ? "" : String(v).trim()))
+      .filter(Boolean);
+
+    if (cleaned.length > 0) {
+      normalized[key] = cleaned;
+    }
+  }
+
+  return normalized;
+}
+
+function extractMissingItemSpecifics(ebayErrorResponse: any): string[] {
+  const missing = new Set<string>();
+
+  if (!ebayErrorResponse?.errors || !Array.isArray(ebayErrorResponse.errors)) {
+    return [];
+  }
+
+  for (const err of ebayErrorResponse.errors) {
+    const messageText = (err.message || err.longMessage || "").toLowerCase();
+    const isMissingSpecific =
+      err.errorId === 25002 ||
+      messageText.includes("item specific") ||
+      messageText.includes("specifics");
+
+    if (!isMissingSpecific) continue;
+
+    if (Array.isArray(err.parameters)) {
+      for (const param of err.parameters) {
+        const name = (param.name || "").toString().toLowerCase();
+        const value = (param.value || "").toString().replace(/\"|'/g, "").trim();
+
+        if (!value) continue;
+
+        if (name === "2" || name === "name" || name.includes("specific")) {
+          missing.add(value);
+        }
+      }
+    }
+
+    const match = /item specific\s+\"?([^\"]+)\"?\s+is missing/.exec(
+      err.message || err.longMessage || ""
+    );
+
+    if (match?.[1]) {
+      missing.add(match[1].trim());
+    }
+  }
+
+  return Array.from(missing);
+}
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  // Get vine items stats
+  app.get("/api/vine-items/stats", async (_req, res) => {
+    try {
+      // Get all status counts, live listings, and sold items in parallel
+      const [statusResult, liveListingsResult, soldResult] = await Promise.all([
+        db
+          .select({
+            status: vineItems.status,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(vineItems)
+          .groupBy(vineItems.status),
+        
+        // Count items with live eBay listings (state='live')
+        db
+          .select({ count: sql<number>`count(DISTINCT ${listings.inventoryId})::int` })
+          .from(listings)
+          .where(eq(listings.state, "live")),
+        
+        // Count items with orders (sold items)
+        db
+          .select({ count: sql<number>`count(DISTINCT ${listings.inventoryId})::int` })
+          .from(orders)
+          .innerJoin(listings, eq(listings.listingId, orders.listingId)),
+@@ -1215,52 +1289,55 @@ Output only JSON:
+        high: Math.round(12.00 * 1.05 * 100) / 100,
+      });
+    }
+  });
+
+  // Publish listing (idempotent with API tracing)
+  app.post("/api/listings/publish", upload.array("photos", 12), async (req, res) => {
+    const { ApiTracer } = await import("./lib/apiTracer");
+    const { compareOffers, verifyOfferPublished } = await import("./lib/ebayOfferHelpers");
+    const { selectBestPolicy } = await import("./lib/ebay");
+
+    const tracer = new ApiTracer();
+
+    try {
+      const {
+        vineItemId,
+        title,
+        description,
+        categoryId,
+        priceCents,
+        weightOz,
+        dimsL,
+        dimsW,
+        dimsH,
+        fulfillmentPolicyId,
+        itemSpecifics,
+      } = req.body;
+
+      const parsedItemSpecifics = normalizeItemSpecifics(itemSpecifics);
+
+      // Validate all required fields before processing
+      const photoCount = (req.files as Express.Multer.File[])?.length || 0;
+      const validationErrors = validateListingData({
+        title,
+        description,
+        categoryId,
+        photos: photoCount,
+      });
+
+      // Add fulfillment policy validation
+      if (!fulfillmentPolicyId) {
+        validationErrors.push("Fulfillment policy must be selected");
+      }
+
+      if (validationErrors.length > 0) {
+        return res.status(400).json({ 
+          error: "Validation failed",
+          details: validationErrors,
+          trace: tracer.getTrace(),
+          fieldErrors: {
+            title: validationErrors.find(e => e.includes("Title")),
+            description: validationErrors.find(e => e.includes("Description")),
+            categoryId: validationErrors.find(e => e.includes("category")),
+            photos: validationErrors.find(e => e.includes("photos")),
+            fulfillmentPolicyId: validationErrors.find(e => e.includes("Fulfillment")),
+@@ -1316,51 +1393,51 @@ Output only JSON:
+          dimsInH: parseInt(dimsH),
+          privacyPassed: true,
+        })
+        .onConflictDoUpdate({
+          target: inventoryItems.vineItemId,
+          set: {
+            condition: "New",
+            photoSetId: photoSet.photoSetId,
+            weightOz: parseInt(weightOz),
+            dimsInL: parseInt(dimsL),
+            dimsInW: parseInt(dimsW),
+            dimsInH: parseInt(dimsH),
+            privacyPassed: true,
+          },
+        })
+        .returning();
+
+      // Create/update eBay inventory item
+      const sku = `ITEM-${inventoryItem.inventoryId}`;
+      
+      // Build inventory item payload with shipping package details
+      const inventoryItemPayload: any = {
+        product: {
+          title,
+          description,
+          aspects: {},
+          aspects: parsedItemSpecifics,
+          imageUrls: photoUrls.slice(0, 12),
+        },
+        condition: "NEW",
+        availability: {
+          shipToLocationAvailability: {
+            quantity: 1,
+          },
+        },
+      };
+
+      // Add package weight and dimensions (required by eBay)
+      if (weightOz && dimsL && dimsW && dimsH) {
+        inventoryItemPayload.packageWeightAndSize = {
+          weight: {
+            value: parseFloat(weightOz),
+            unit: "OUNCE",
+          },
+          dimensions: {
+            length: parseFloat(dimsL),
+            width: parseFloat(dimsW),
+            height: parseFloat(dimsH),
+            unit: "INCH",
+          },
+        };
+      }
+@@ -1674,64 +1751,69 @@ Output only JSON:
+      if (isEbayApiError && typeof error.context.responseBody === 'object') {
+        ebayErrorResponse = error.context.responseBody;
+      }
+
+      // Extract full eBay error structure from the failed step's response body
+      if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
+        ebayErrorResponse = failedStep.responseBody;
+      }
+
+      // Build detailed error response with complete eBay error structure
+      const errorResponse: any = {
+        success: false,
+        error: error.message,
+        trace: tracer.getTrace(),
+        failedStep,
+      };
+
+      if (isEbayApiError) {
+        errorResponse.ebayContext = error.context;
+      }
+
+      // If we have a full eBay error response, include it verbatim
+      if (ebayErrorResponse?.errors) {
+        errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
+        errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
+        
+
+        // Create human-readable summary
+        errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+          const parts = [
+            err.errorId ? `[${err.errorId}]` : '',
+            err.message || err.longMessage || 'Unknown error',
+          ].filter(Boolean);
+          
+
+          if (err.parameters && err.parameters.length > 0) {
+            parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(', ')})`);
+          }
+          
+
+          return parts.join(' ');
+        });
+
+        const missingItemSpecifics = extractMissingItemSpecifics(ebayErrorResponse);
+        if (missingItemSpecifics.length > 0) {
+          errorResponse.missingItemSpecifics = missingItemSpecifics;
+        }
+      } else {
+        errorResponse.details = [error.message];
+      }
+
+      const statusCode = isEbayApiError && error.status ? error.status : 400;
+      res.status(statusCode).json(errorResponse);
+    }
+  });
+
+  // Get all listings with photos
+  app.get("/api/listings", async (_req, res) => {
+    try {
+      const allListings = await db
+        .select({
+          listingId: listings.listingId,
+          inventoryId: listings.inventoryId,
+          ebayOfferId: listings.ebayOfferId,
+          ebayItemId: listings.ebayItemId,
+          categoryId: listings.categoryId,
+          title: listings.title,
+          description: listings.description,
+          priceCents: listings.priceCents,
+          fulfillmentPolicyId: listings.fulfillmentPolicyId,
+          publishedAt: listings.publishedAt,
+          state: listings.state,
+@@ -1854,50 +1936,51 @@ Output only JSON:
+    });
+
+    // Validate input BEFORE try/catch
+    const validation = editSchema.safeParse({
+      title: req.body.title,
+      description: req.body.description,
+      priceCents: Number(req.body.priceCents),
+      ebaySku: req.body.ebaySku,
+      categoryId: req.body.categoryId,
+      fulfillmentPolicyId: req.body.fulfillmentPolicyId,
+      weightOz: req.body.weightOz ? Number(req.body.weightOz) : undefined,
+      dimsL: req.body.dimsL ? Number(req.body.dimsL) : undefined,
+      dimsW: req.body.dimsW ? Number(req.body.dimsW) : undefined,
+      dimsH: req.body.dimsH ? Number(req.body.dimsH) : undefined,
+      quantity: req.body.quantity ? Number(req.body.quantity) : undefined,
+    });
+
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      });
+    }
+
+    const validatedData = validation.data;
+    const parsedItemSpecifics = normalizeItemSpecifics(req.body.itemSpecifics);
+
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Get inventory item with photos
+      const [invItem] = await db
+        .select()
+        .from(inventoryItems)
+        .where(eq(inventoryItems.inventoryId, existingListing.inventoryId));
+
+      // Determine quantity: use provided value, or fall back to existing
+      const currentQuantity = invItem.quantity ?? 1;
+      const targetQuantity = validatedData.quantity ?? currentQuantity;
+
+      let photoUrls: string[] = [];
+@@ -1925,51 +2008,51 @@ Output only JSON:
+          description: validatedData.description,
+          fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId || "",
+          imageUrls: photoUrls,
+        });
+
+        console.log(`[Edit Listing] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
+
+        // If dimensions or title/description/SKU changed, update inventory item
+        const inventoryNeedsUpdate = 
+          validatedData.weightOz !== invItem.weightOz ||
+          validatedData.dimsL !== invItem.dimsInL ||
+          validatedData.dimsW !== invItem.dimsInW ||
+          validatedData.dimsH !== invItem.dimsInH ||
+          validatedData.ebaySku !== existingListing.ebaySku ||
+          comparison.nonRevisableChanges.includes("title") ||
+          comparison.nonRevisableChanges.includes("description");
+
+        if (inventoryNeedsUpdate) {
+          const sku = validatedData.ebaySku;
+          await ebayClient.upsertInventoryItem(
+            sku,
+            {
+              product: {
+                title: validatedData.title,
+                description: validatedData.description,
+                aspects: {},
+                aspects: parsedItemSpecifics,
+                imageUrls: photoUrls.slice(0, 12),
+              },
+              condition: "NEW",
+              availability: {
+                shipToLocationAvailability: {
+                  quantity: targetQuantity,
+                },
+              },
+              packageWeightAndSize: {
+                weight: {
+                  value: validatedData.weightOz || invItem.weightOz || 1,
+                  unit: "OUNCE",
+                },
+                dimensions: {
+                  length: validatedData.dimsL || invItem.dimsInL || 1,
+                  width: validatedData.dimsW || invItem.dimsInW || 1,
+                  height: validatedData.dimsH || invItem.dimsInH || 1,
+                  unit: "INCH",
+                },
+              },
+            },
+            { tracer, operationName: "Upsert inventory item" }
+          );
+        }
+
+@@ -2088,50 +2171,55 @@ Output only JSON:
+        success: false,
+        error: error.message,
+        trace: tracer.getTrace(),
+        failedStep,
+      };
+
+      if (isEbayApiError) {
+        errorResponse.ebayContext = error.context;
+      }
+
+      if (ebayErrorResponse?.errors) {
+        errorResponse.ebayErrors = ebayErrorResponse.errors;
+        errorResponse.ebayErrorDetails = ebayErrorResponse;
+        errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+          const parts = [
+            err.errorId ? `[${err.errorId}]` : "",
+            err.message || err.longMessage || "Unknown error",
+          ].filter(Boolean);
+
+          if (err.parameters && err.parameters.length > 0) {
+            parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(", ")})`);
+          }
+
+          return parts.join(" ");
+        });
+
+        const missingItemSpecifics = extractMissingItemSpecifics(ebayErrorResponse);
+        if (missingItemSpecifics.length > 0) {
+          errorResponse.missingItemSpecifics = missingItemSpecifics;
+        }
+      } else {
+        errorResponse.details = [error.message];
+      }
+
+      const statusCode = isEbayApiError && error.status ? error.status : 500;
+      res.status(statusCode).json(errorResponse);
+    }
+  });
+
+  // End/withdraw a listing
+  app.post("/api/listings/:id/end", async (req, res) => {
+    const { ApiTracer } = await import("./lib/apiTracer");
+    
+    const tracer = new ApiTracer();
+
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
