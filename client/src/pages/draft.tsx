@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
 import type { VineItem, Listing } from "@shared/schema";
 import { PublishModal } from "@/components/PublishModal";
+import { ItemSpecificsModal } from "@/components/ItemSpecificsModal";
 import {
   Select,
   SelectContent,
@@ -106,6 +107,9 @@ export default function DraftPage() {
   const [publishResult, setPublishResult] = useState<any>(null);
   const [generatedSku, setGeneratedSku] = useState<string>("");
   const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
+  const [showSpecificsModal, setShowSpecificsModal] = useState(false);
+  const [requiredSpecificsFields, setRequiredSpecificsFields] = useState<string[]>([]);
+  const [itemSpecifics, setItemSpecifics] = useState<Record<string, string[]>>({});
 
   const { data: listing } = useQuery<any>({
     queryKey: [`/api/listings/${listingId}`],
@@ -593,6 +597,11 @@ export default function DraftPage() {
       formData.append("dimsW", dimsW);
       formData.append("dimsH", dimsH);
       formData.append("sku", generatedSku);
+      
+      // Include item specifics if provided
+      if (Object.keys(itemSpecifics).length > 0) {
+        formData.append("itemSpecifics", JSON.stringify(itemSpecifics));
+      }
 
       // Open modal and set loading state
       setPublishModalOpen(true);
@@ -609,6 +618,15 @@ export default function DraftPage() {
     onError: (error: any) => {
       setPublishState("error");
       if (error instanceof ApiError && error.data) {
+        // Check if eBay returned missing item specifics error
+        if (error.data.missingItemSpecifics && error.data.missingItemSpecifics.length > 0) {
+          // Close publish modal and show item specifics modal
+          setPublishModalOpen(false);
+          setRequiredSpecificsFields(error.data.missingItemSpecifics);
+          setShowSpecificsModal(true);
+          return;
+        }
+
         setPublishResult({
           error: error.data.error || error.message,
           details: error.data.details || [error.message],
@@ -662,6 +680,15 @@ export default function DraftPage() {
     setSelectedPhotos((prev) => prev.filter((_, i) => i !== index));
     URL.revokeObjectURL(photoUrls[index]);
     setPhotoUrls((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleItemSpecificsSubmit = (specifics: Record<string, string[]>) => {
+    // Save specifics to state
+    setItemSpecifics(specifics);
+    setShowSpecificsModal(false);
+    
+    // Retry publish with the specifics
+    publishMutation.mutate();
   };
 
   const hasPrivacyWarnings = !listingId && titleSuggestions?.privacyWarnings && titleSuggestions.privacyWarnings.length > 0;
@@ -1458,6 +1485,15 @@ export default function DraftPage() {
         }}
         publishState={publishState}
         result={publishResult}
+      />
+
+      {/* Item Specifics Modal */}
+      <ItemSpecificsModal
+        isOpen={showSpecificsModal}
+        onClose={() => setShowSpecificsModal(false)}
+        requiredFields={requiredSpecificsFields}
+        onSubmit={handleItemSpecificsSubmit}
+        isSubmitting={publishMutation.isPending}
       />
     </div>
   );

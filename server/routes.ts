@@ -1237,7 +1237,18 @@ Output only JSON:
         dimsW,
         dimsH,
         fulfillmentPolicyId,
+        itemSpecifics, // Optional JSON string of item specifics
       } = req.body;
+
+      // Parse item specifics if provided
+      let parsedItemSpecifics: Record<string, string[]> | undefined;
+      if (itemSpecifics) {
+        try {
+          parsedItemSpecifics = JSON.parse(itemSpecifics);
+        } catch (e) {
+          console.error("[Publish] Failed to parse itemSpecifics:", e);
+        }
+      }
 
       // Validate all required fields before processing
       const photoCount = (req.files as Express.Multer.File[])?.length || 0;
@@ -1338,7 +1349,7 @@ Output only JSON:
         product: {
           title,
           description,
-          aspects: {},
+          aspects: parsedItemSpecifics || {},
           imageUrls: photoUrls.slice(0, 12),
         },
         condition: "NEW",
@@ -1626,6 +1637,7 @@ Output only JSON:
             description,
             priceCents: parseInt(priceCents),
             fulfillmentPolicyId,
+            itemSpecifics: parsedItemSpecifics || null,
             publishedAt: new Date(),
             state: "live",
           })
@@ -1644,6 +1656,7 @@ Output only JSON:
             description,
             priceCents: parseInt(priceCents),
             fulfillmentPolicyId,
+            itemSpecifics: parsedItemSpecifics || null,
             publishedAt: new Date(),
             state: "live",
           })
@@ -1720,6 +1733,33 @@ Output only JSON:
       if (ebayErrorResponse?.errors) {
         errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
         errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
+        
+        // Check for missing item specifics error (25002)
+        const missingSpecificsError = ebayErrorResponse.errors.find((err: any) => 
+          err.errorId === 25002 || err.errorId === '25002'
+        );
+        
+        if (missingSpecificsError) {
+          // Extract required field names from error parameters
+          // eBay returns parameters like: [{"name":"2","value":"Type"}]
+          // We want to extract all "value" fields which are the required field names
+          const requiredFields: string[] = [];
+          if (missingSpecificsError.parameters && Array.isArray(missingSpecificsError.parameters)) {
+            missingSpecificsError.parameters.forEach((param: any) => {
+              // Look for parameter values that are field names (not messages)
+              if (param.value && !param.value.includes(' ') && param.value !== 'The item specific Type is missing.') {
+                if (!requiredFields.includes(param.value)) {
+                  requiredFields.push(param.value);
+                }
+              }
+            });
+          }
+          
+          if (requiredFields.length > 0) {
+            errorResponse.missingItemSpecifics = requiredFields;
+            console.log(`[Publish] Missing item specifics detected:`, requiredFields);
+          }
+        }
         
         // Create human-readable summary
         errorResponse.details = ebayErrorResponse.errors.map((err: any) => {

@@ -106,6 +106,10 @@ export const listings = pgTable("listings", {
   driftSnapshot: json("drift_snapshot").$type<Record<string, { local: any; ebay: any }>>(),
   ebayOfferJson: json("ebay_offer_json").$type<any>(),
   ebayStatus: text("ebay_status"),
+  
+  // Item specifics for eBay product aspects (e.g., Brand, Type, Color, etc.)
+  // Format: { "Brand": ["Nike"], "Type": ["Running Shoe"], "Color": ["Red", "Blue"] }
+  itemSpecifics: json("item_specifics").$type<Record<string, string[]>>(),
 });
 
 // Orders table
