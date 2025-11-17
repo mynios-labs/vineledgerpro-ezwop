@@ -1222,12 +1222,6 @@ Output only JSON:
   app.post("/api/listings/publish", upload.array("photos", 12), async (req, res) => {
     const { ApiTracer } = await import("./lib/apiTracer");
     const { compareOffers, verifyOfferPublished } = await import("./lib/ebayOfferHelpers");
-    const {
-      getOffersBySku,
-      getOffer,
-      updateOffer,
-      withdrawOffer,
-    } = await import("./lib/ebay");
 
     const tracer = new ApiTracer();
 
@@ -1371,16 +1365,25 @@ Output only JSON:
         };
       }
 
-      await ebayClient.upsertInventoryItem(sku, inventoryItemPayload);
+      await ebayClient.upsertInventoryItem(sku, inventoryItemPayload, {
+        tracer,
+        operationName: "Upsert inventory item",
+      });
 
       // Get or create merchant location
-      const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
+      const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation({
+        tracer,
+        operationName: "Get merchant location",
+      });
 
       // Fetch and validate all 3 required business policies
-      const { getFulfillmentPolicies, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
+      const { selectBestPolicy } = await import("./lib/ebay");
       
       // Validate fulfillment policy (user-selected)
-      const fulfillmentPoliciesData = await ebayClient.getFulfillmentPolicies("EBAY_US");
+      const fulfillmentPoliciesData = await ebayClient.getFulfillmentPolicies("EBAY_US", {
+        tracer,
+        operationName: "Get fulfillment policies",
+      });
       const validFulfillmentPolicy = fulfillmentPoliciesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
       
       if (!validFulfillmentPolicy) {
@@ -1393,7 +1396,10 @@ Output only JSON:
       console.log(`[Publish] Using fulfillment policy: ${validFulfillmentPolicy.name} (${fulfillmentPolicyId})`);
       
       // Auto-select payment policy (prefer default, fallback to first)
-      const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+      const paymentPoliciesData = await ebayClient.getPaymentPolicies("EBAY_US", {
+        tracer,
+        operationName: "Get payment policies",
+      });
       const selectedPaymentPolicy = selectBestPolicy(
         paymentPoliciesData.paymentPolicies || [],
         "EBAY_US",
@@ -1411,7 +1417,10 @@ Output only JSON:
       console.log(`[Publish] Auto-selected payment policy: ${selectedPaymentPolicy.name} (${paymentPolicyId})`);
       
       // Auto-select return policy (prefer default, fallback to first)
-      const returnPoliciesData = await getReturnPolicies("EBAY_US");
+      const returnPoliciesData = await ebayClient.getReturnPolicies("EBAY_US", {
+        tracer,
+        operationName: "Get return policies",
+      });
       const selectedReturnPolicy = selectBestPolicy(
         returnPoliciesData.returnPolicies || [],
         "EBAY_US",
@@ -1429,7 +1438,10 @@ Output only JSON:
       console.log(`[Publish] Auto-selected return policy: ${selectedReturnPolicy.name} (${returnPolicyId})`);
 
       // IDEMPOTENT FLOW: Detect existing offers
-      const offersData = await getOffersBySku(sku, "EBAY_US", tracer);
+      const offersData = await ebayClient.getOffersBySku(sku, {
+        tracer,
+        operationName: "Get existing offers",
+      });
       const existingOffers = offersData.offers || [];
       
       // Filter to only ACTIVE offers (exclude ENDED, WITHDRAWN, etc.)
@@ -1464,11 +1476,14 @@ Output only JSON:
           if (comparison.nonRevisableChanges.length > 0) {
             // Non-revisable changes: withdraw → update → republish
             if (existingOffer.status === "PUBLISHED") {
-              await withdrawOffer(offerId, tracer);
+              await ebayClient.withdrawOffer(offerId, {
+                tracer,
+                operationName: "Withdraw offer",
+              });
             }
             
             // Update offer
-            await updateOffer(offerId, {
+            await ebayClient.updateOffer(offerId, {
               sku,
               marketplaceId: "EBAY_US",
               format: "FIXED_PRICE",
@@ -1485,13 +1500,19 @@ Output only JSON:
                 },
               },
               categoryId,
-            }, tracer);
+            }, {
+              tracer,
+              operationName: "Update offer (non-revisable)",
+            });
 
             // Republish
-            await ebayClient.publishOffer(offerId);
+            await ebayClient.publishOffer(offerId, {
+              tracer,
+              operationName: "Republish offer",
+            });
           } else if (comparison.revisableChanges.length > 0) {
             // Only revisable changes: update in-place (revise)
-            await updateOffer(offerId, {
+            await ebayClient.updateOffer(offerId, {
               sku,
               marketplaceId: "EBAY_US",
               format: "FIXED_PRICE",
@@ -1508,17 +1529,26 @@ Output only JSON:
                 },
               },
               categoryId,
-            }, tracer);
+            }, {
+              tracer,
+              operationName: "Update offer (revisable)",
+            });
 
             // If not published, publish now
             if (existingOffer.status !== "PUBLISHED") {
-              await ebayClient.publishOffer(offerId);
+              await ebayClient.publishOffer(offerId, {
+                tracer,
+                operationName: "Publish updated offer",
+              });
             }
           }
         } else if (existingOffer.status !== "PUBLISHED") {
           // No changes but not published - publish it
           console.log(`[Publish] No changes detected, publishing unpublished offer`);
-          await ebayClient.publishOffer(offerId);
+          await ebayClient.publishOffer(offerId, {
+            tracer,
+            operationName: "Publish unpublished offer",
+          });
         } else {
           console.log(`[Publish] No changes detected, offer already published`);
         }
@@ -1545,12 +1575,15 @@ Output only JSON:
         });
 
         offerId = offerData.offerId;
-        await ebayClient.publishOffer(offerId);
+        await ebayClient.publishOffer(offerId, {
+          tracer,
+          operationName: "Publish new offer",
+        });
       }
 
       // Verify offer published and get itemId
       const verified = await verifyOfferPublished(
-        (id: string) => getOffer(id, tracer),
+        (id: string) => ebayClient.getOffer(id, { tracer, operationName: "Verify offer" }),
         offerId,
         3,
         2000

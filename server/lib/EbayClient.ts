@@ -392,9 +392,10 @@ export class EbayClient {
   /**
    * Get offers for a specific SKU
    */
-  async getOffersBySku(sku: string): Promise<{ offers: EbayOffer[] }> {
+  async getOffersBySku(sku: string, options?: { tracer?: ApiTracer; operationName?: string }): Promise<{ offers: EbayOffer[] }> {
     return this.request<{ offers: EbayOffer[] }>(
-      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${MARKETPLACE_ID}`
+      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${MARKETPLACE_ID}`,
+      options
     );
   }
 
@@ -458,10 +459,10 @@ export class EbayClient {
   /**
    * Withdraw (end) an offer
    */
-  async withdrawOffer(offerId: string): Promise<void> {
+  async withdrawOffer(offerId: string, options?: { tracer?: ApiTracer; operationName?: string }): Promise<void> {
     await this.request<void>(
       `/sell/inventory/v1/offer/${offerId}/withdraw`,
-      { method: 'POST' }
+      { method: 'POST', ...options }
     );
     console.log(`[EbayClient] Offer withdrawn: ${offerId}`);
   }
@@ -523,9 +524,10 @@ export class EbayClient {
   /**
    * Get fulfillment policies
    */
-  async getFulfillmentPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getFulfillmentPolicies(marketplaceId: string = MARKETPLACE_ID, options?: { tracer?: ApiTracer; operationName?: string }): Promise<any> {
     return this.request(
-      `/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`,
+      options
     );
   }
 
