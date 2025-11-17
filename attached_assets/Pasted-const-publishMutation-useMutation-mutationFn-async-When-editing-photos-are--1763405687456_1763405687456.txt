@@ -1,0 +1,114 @@
+const publishMutation = useMutation({
+  mutationFn: async () => {
+    // When editing, photos are optional (already on eBay)
+    if (!listingId && (!editableDescription || selectedPhotos.length < 2 || editableTitles.length === 0)) {
+      throw new Error("Please add at least 2 photos");
+    }
+
+    if (!editableDescription || editableTitles.length === 0) {
+      throw new Error("Missing required fields");
+    }
+
+    if (!selectedCategoryId || selectedCategoryId === "0") {
+      throw new Error("Please select a valid category");
+    }
+
+    if (!selectedFulfillmentPolicyId) {
+      throw new Error("Please select a fulfillment policy");
+    }
+
+    // Validate title length (eBay limit is 80 characters)
+    const selectedTitleText = editableTitles[selectedTitle];
+    if (!selectedTitleText || selectedTitleText.length > 80) {
+      throw new Error("Title must be between 1 and 80 characters. Please select a different title.");
+    }
+
+    // DEBUG: Log title selection details
+    console.log("[PUBLISH DEBUG] Title selection:", {
+      selectedTitleIndex: selectedTitle,
+      allTitles: editableTitles,
+      selectedTitleText,
+      selectedTitleLength: selectedTitleText?.length,
+      editMode: !!listingId,
+    });
+
+    // When editing, use JSON body instead of FormData (no photo uploads)
+    if (listingId) {
+      const payload = {
+        title: editableTitles[selectedTitle],
+        description: serializeDescription(editableDescription),
+        categoryId: selectedCategoryId,
+        fulfillmentPolicyId: selectedFulfillmentPolicyId,
+        priceCents: Math.round(parseFloat(price) * 100),
+        weightOz: parseFloat(weightOz),
+        dimsL: parseFloat(dimsL),
+        dimsW: parseFloat(dimsW),
+        dimsH: parseFloat(dimsH),
+      };
+
+      setPublishModalOpen(true);
+      setPublishState("loading");
+      setPublishResult(null);
+
+      return apiRequest("PUT", `/api/listings/${listingId}/edit`, payload);
+    }
+
+    // Creating new listing - use FormData for photos
+    const formData = new FormData();
+    selectedPhotos.forEach((photo) => formData.append("photos", photo));
+    formData.append("vineItemId", vineItemId!);
+    formData.append("title", editableTitles[selectedTitle]);
+    formData.append("description", serializeDescription(editableDescription));
+    formData.append("categoryId", selectedCategoryId);
+    formData.append("fulfillmentPolicyId", selectedFulfillmentPolicyId);
+    formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
+    formData.append("weightOz", weightOz);
+    formData.append("dimsL", dimsL);
+    formData.append("dimsW", dimsW);
+    formData.append("dimsH", dimsH);
+    formData.append("sku", generatedSku);
+
+    // Open modal and set loading state
+    setPublishModalOpen(true);
+    setPublishState("loading");
+    setPublishResult(null);
+
+    return apiRequest("POST", "/api/listings/publish", formData);
+  },
+  onSuccess: (data: any) => {
+    setPublishState("success");
+    setPublishResult(data);
+    queryClient.invalidateQueries({ queryKey: ["/api/listings"] });
+  },
+  onError: (error: any) => {
+    setPublishState("error");
+    if (error instanceof ApiError && error.data) {
+      setPublishResult({
+        error: error.data.error || error.message,
+        details: error.data.details || [error.message],
+        failedStep: error.data.failedStep,
+        trace: error.data.trace,
+        ebayErrors: error.data.ebayErrors,
+        ebayErrorDetails: error.data.ebayErrorDetails,
+      });
+
+      toast({
+        title: error.data.error || "Publish failed",
+        description: (error.data.details && error.data.details[0]) || error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPublishResult({
+      error: error.message,
+      details: error.details || [error.message],
+      failedStep: error.failedStep,
+      trace: error.trace,
+    });
+    toast({
+      title: "Publish failed",
+      description: error.message,
+      variant: "destructive",
+    });
+  },

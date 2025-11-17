@@ -1,0 +1,206 @@
+if (existingListing.ebayOfferId && existingListing.state === "live") {
+    // Get current eBay offer
+    const currentOffer = await ebayClient.getOffer(
+      existingListing.ebayOfferId,
+      { tracer, operationName: "Get offer" }
+    );
+
+    // Compare what changed
+    const comparison = compareOffers(currentOffer, {
+      priceCents: validatedData.priceCents,
+      categoryId: validatedData.categoryId || existingListing.categoryId || "",
+      title: validatedData.title,
+      description: validatedData.description,
+      fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId || "",
+      imageUrls: photoUrls,
+    });
+
+    console.log(`[Edit Listing] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
+
+    // If dimensions or title/description/SKU changed, update inventory item
+    const inventoryNeedsUpdate = 
+      validatedData.weightOz !== invItem.weightOz ||
+      validatedData.dimsL !== invItem.dimsInL ||
+      validatedData.dimsW !== invItem.dimsInW ||
+      validatedData.dimsH !== invItem.dimsInH ||
+      validatedData.ebaySku !== existingListing.ebaySku ||
+      comparison.nonRevisableChanges.includes("title") ||
+      comparison.nonRevisableChanges.includes("description");
+
+    if (inventoryNeedsUpdate) {
+      const sku = validatedData.ebaySku;
+      await ebayClient.upsertInventoryItem(
+        sku,
+        {
+          product: {
+            title: validatedData.title,
+            description: validatedData.description,
+            aspects: {},
+            imageUrls: photoUrls.slice(0, 12),
+          },
+          condition: "NEW",
+          availability: {
+            shipToLocationAvailability: {
+              quantity: targetQuantity,
+            },
+          },
+          packageWeightAndSize: {
+            weight: {
+              value: validatedData.weightOz || invItem.weightOz || 1,
+              unit: "OUNCE",
+            },
+            dimensions: {
+              length: validatedData.dimsL || invItem.dimsInL || 1,
+              width: validatedData.dimsW || invItem.dimsInW || 1,
+              height: validatedData.dimsH || invItem.dimsInH || 1,
+              unit: "INCH",
+            },
+          },
+        },
+        { tracer, operationName: "Upsert inventory item" }
+      );
+    }
+
+    // Get merchant location and policies
+    const { selectBestPolicy } = await import("./lib/ebay");
+    const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation({
+      tracer,
+      operationName: "Get merchant location",
+    });
+
+    const paymentPoliciesData = await ebayClient.getPaymentPolicies("EBAY_US", {
+      tracer,
+      operationName: "Get payment policies",
+    });
+    const selectedPaymentPolicy = selectBestPolicy(
+      paymentPoliciesData.paymentPolicies || [],
+      "EBAY_US",
+      "paymentPolicyId"
+    );
+
+    const returnPoliciesData = await ebayClient.getReturnPolicies("EBAY_US", {
+      tracer,
+      operationName: "Get return policies",
+    });
+    const selectedReturnPolicy = selectBestPolicy(
+      returnPoliciesData.returnPolicies || [],
+      "EBAY_US",
+      "returnPolicyId"
+    );
+
+    // Update offer on eBay
+    await ebayClient.updateOffer(
+      existingListing.ebayOfferId,
+      {
+        sku: validatedData.ebaySku,
+        marketplaceId: "EBAY_US",
+        format: "FIXED_PRICE",
+        merchantLocationKey,
+        listingPolicies: {
+          paymentPolicyId: selectedPaymentPolicy.paymentPolicyId,
+          returnPolicyId: selectedReturnPolicy.returnPolicyId,
+          fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId,
+        },
+        pricingSummary: {
+          price: {
+            value: (validatedData.priceCents / 100).toFixed(2),
+            currency: "USD",
+          },
+        },
+        categoryId: validatedData.categoryId || existingListing.categoryId,
+        availableQuantity: targetQuantity,
+      },
+      { tracer, operationName: "Update offer" }
+    );
+
+    // Republish if needed
+    if (comparison.nonRevisableChanges.length > 0 && currentOffer.status !== "PUBLISHED") {
+      await ebayClient.publishOffer(existingListing.ebayOfferId, {
+        tracer,
+        operationName: "Republish offer",
+      });
+    }
+
+    console.log(`[Edit Listing] Successfully updated eBay listing ${existingListing.ebayItemId}`);
+  }
+
+  // ONLY update local DB after eBay succeeds
+  await db
+    .update(listings)
+    .set({
+      title: validatedData.title,
+      description: validatedData.description,
+      priceCents: validatedData.priceCents,
+      ebaySku: validatedData.ebaySku,
+      categoryId: validatedData.categoryId,
+      fulfillmentPolicyId: validatedData.fulfillmentPolicyId,
+    })
+    .where(eq(listings.listingId, id));
+
+  // Update inventory item fields (dimensions and quantity)
+  const inventoryUpdates: any = {};
+  if (validatedData.weightOz !== undefined) inventoryUpdates.weightOz = validatedData.weightOz;
+  if (validatedData.dimsL !== undefined) inventoryUpdates.dimsInL = validatedData.dimsL;
+  if (validatedData.dimsW !== undefined) inventoryUpdates.dimsInW = validatedData.dimsW;
+  if (validatedData.dimsH !== undefined) inventoryUpdates.dimsInH = validatedData.dimsH;
+  if (validatedData.quantity !== undefined) inventoryUpdates.quantity = validatedData.quantity;
+
+  if (Object.keys(inventoryUpdates).length > 0) {
+    await db
+      .update(inventoryItems)
+      .set(inventoryUpdates)
+      .where(eq(inventoryItems.inventoryId, existingListing.inventoryId));
+  }
+
+  res.json({
+    success: true,
+    message: "Listing updated successfully",
+    trace: tracer.getTrace(),
+  });
+} catch (error: any) {
+  console.error("[Edit Listing] Error:", error);
+
+  const failedStep = tracer.getFailedStep();
+  const isEbayApiError = error instanceof EbayApiError;
+  let ebayErrorResponse: any = null;
+
+  if (isEbayApiError && typeof error.context.responseBody === "object") {
+    ebayErrorResponse = error.context.responseBody;
+  }
+
+  if (failedStep?.responseBody && typeof failedStep.responseBody === "object") {
+    ebayErrorResponse = failedStep.responseBody;
+  }
+
+  const errorResponse: any = {
+    success: false,
+    error: error.message,
+    trace: tracer.getTrace(),
+    failedStep,
+  };
+
+  if (isEbayApiError) {
+    errorResponse.ebayContext = error.context;
+  }
+
+  if (ebayErrorResponse?.errors) {
+    errorResponse.ebayErrors = ebayErrorResponse.errors;
+    errorResponse.ebayErrorDetails = ebayErrorResponse;
+    errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+      const parts = [
+        err.errorId ? `[${err.errorId}]` : "",
+        err.message || err.longMessage || "Unknown error",
+      ].filter(Boolean);
+
+      if (err.parameters && err.parameters.length > 0) {
+        parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(", ")})`);
+      }
+
+      return parts.join(" ");
+    });
+  } else {
+    errorResponse.details = [error.message];
+  }
+
+  const statusCode = isEbayApiError && error.status ? error.status : 500;
+  res.status(statusCode).json(errorResponse);
