@@ -1716,9 +1716,14 @@ Output only JSON:
       const failedStep = tracer.getFailedStep();
       let ebayErrorResponse: any = null;
       
+      console.log(`[Publish] DEBUG: failedStep exists?`, !!failedStep);
+      console.log(`[Publish] DEBUG: failedStep.responseBody type:`, typeof failedStep?.responseBody);
+      
       // Extract full eBay error structure from the failed step's response body
       if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
         ebayErrorResponse = failedStep.responseBody;
+        console.log(`[Publish] DEBUG: ebayErrorResponse.errors exists?`, !!ebayErrorResponse?.errors);
+        console.log(`[Publish] DEBUG: ebayErrorResponse:`, JSON.stringify(ebayErrorResponse, null, 2));
       }
 
       // Build detailed error response with complete eBay error structure
@@ -1730,6 +1735,7 @@ Output only JSON:
       };
 
       // If we have a full eBay error response, include it verbatim
+      console.log(`[Publish] DEBUG: About to check if ebayErrorResponse?.errors is truthy:`, !!ebayErrorResponse?.errors);
       if (ebayErrorResponse?.errors) {
         errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
         errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
