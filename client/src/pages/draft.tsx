@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
 import type { VineItem, Listing } from "@shared/schema";
 import { PublishModal } from "@/components/PublishModal";
 import {
@@ -586,6 +586,24 @@ export default function DraftPage() {
     },
     onError: (error: any) => {
       setPublishState("error");
+      if (error instanceof ApiError && error.data) {
+        setPublishResult({
+          error: error.data.error || error.message,
+          details: error.data.details || [error.message],
+          failedStep: error.data.failedStep,
+          trace: error.data.trace,
+          ebayErrors: error.data.ebayErrors,
+          ebayErrorDetails: error.data.ebayErrorDetails,
+        });
+
+        toast({
+          title: error.data.error || "Publish failed",
+          description: (error.data.details && error.data.details[0]) || error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
       setPublishResult({
         error: error.message,
         details: error.details || [error.message],

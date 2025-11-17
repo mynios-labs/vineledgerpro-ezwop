@@ -42,7 +42,8 @@ import { getAccessToken } from "./lib/ebay";
 import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
 import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
 import { fetchAllEbayListings } from "./lib/ebayListings";
-import { ebayClient } from "./lib/EbayClient";
+import { ebayClient, EbayApiError } from "./lib/EbayClient";
+import { ApiTracer } from "./lib/apiTracer";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1811,7 +1812,7 @@ Output only JSON:
     const { compareOffers } = await import("./lib/ebayOfferHelpers");
     const { z } = await import("zod");
     
-    const tracer = { log: (msg: string) => console.log(msg), getTrace: () => [] };
+    const tracer = new ApiTracer();
 
     // Server-side validation schema  
     const editSchema = z.object({
@@ -1887,7 +1888,10 @@ Output only JSON:
       // UPDATE EBAY FIRST - if it fails, we won't corrupt local DB
       if (existingListing.ebayOfferId && existingListing.state === "live") {
         // Get current eBay offer
-        const currentOffer = await ebayClient.getOffer(existingListing.ebayOfferId);
+        const currentOffer = await ebayClient.getOffer(
+          existingListing.ebayOfferId,
+          { tracer, operationName: "Get offer" }
+        );
 
         // Compare what changed
         const comparison = compareOffers(currentOffer, {
@@ -1913,46 +1917,59 @@ Output only JSON:
 
         if (inventoryNeedsUpdate) {
           const sku = validatedData.ebaySku;
-          await ebayClient.upsertInventoryItem(sku, {
-            product: {
-              title: validatedData.title,
-              description: validatedData.description,
-              aspects: {},
-              imageUrls: photoUrls.slice(0, 12),
-            },
-            condition: "NEW",
-            availability: {
-              shipToLocationAvailability: {
-                quantity: targetQuantity,
+          await ebayClient.upsertInventoryItem(
+            sku,
+            {
+              product: {
+                title: validatedData.title,
+                description: validatedData.description,
+                aspects: {},
+                imageUrls: photoUrls.slice(0, 12),
+              },
+              condition: "NEW",
+              availability: {
+                shipToLocationAvailability: {
+                  quantity: targetQuantity,
+                },
+              },
+              packageWeightAndSize: {
+                weight: {
+                  value: validatedData.weightOz || invItem.weightOz || 1,
+                  unit: "OUNCE",
+                },
+                dimensions: {
+                  length: validatedData.dimsL || invItem.dimsInL || 1,
+                  width: validatedData.dimsW || invItem.dimsInW || 1,
+                  height: validatedData.dimsH || invItem.dimsInH || 1,
+                  unit: "INCH",
+                },
               },
             },
-            packageWeightAndSize: {
-              weight: {
-                value: validatedData.weightOz || invItem.weightOz || 1,
-                unit: "OUNCE",
-              },
-              dimensions: {
-                length: validatedData.dimsL || invItem.dimsInL || 1,
-                width: validatedData.dimsW || invItem.dimsInW || 1,
-                height: validatedData.dimsH || invItem.dimsInH || 1,
-                unit: "INCH",
-              },
-            },
-          });
+            { tracer, operationName: "Upsert inventory item" }
+          );
         }
 
         // Get merchant location and policies
-        const { getOrCreateMerchantLocation, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
-        const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
+        const { selectBestPolicy } = await import("./lib/ebay");
+        const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation({
+          tracer,
+          operationName: "Get merchant location",
+        });
         
-        const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+        const paymentPoliciesData = await ebayClient.getPaymentPolicies("EBAY_US", {
+          tracer,
+          operationName: "Get payment policies",
+        });
         const selectedPaymentPolicy = selectBestPolicy(
           paymentPoliciesData.paymentPolicies || [],
           "EBAY_US",
           "paymentPolicyId"
         );
         
-        const returnPoliciesData = await getReturnPolicies("EBAY_US");
+        const returnPoliciesData = await ebayClient.getReturnPolicies("EBAY_US", {
+          tracer,
+          operationName: "Get return policies",
+        });
         const selectedReturnPolicy = selectBestPolicy(
           returnPoliciesData.returnPolicies || [],
           "EBAY_US",
@@ -1960,29 +1977,36 @@ Output only JSON:
         );
 
         // Update offer on eBay
-        await ebayClient.updateOffer(existingListing.ebayOfferId, {
-          sku: validatedData.ebaySku,
-          marketplaceId: "EBAY_US",
-          format: "FIXED_PRICE",
-          merchantLocationKey,
-          listingPolicies: {
-            paymentPolicyId: selectedPaymentPolicy.paymentPolicyId,
-            returnPolicyId: selectedReturnPolicy.returnPolicyId,
-            fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId,
-          },
-          pricingSummary: {
-            price: {
-              value: (validatedData.priceCents / 100).toFixed(2),
-              currency: "USD",
+        await ebayClient.updateOffer(
+          existingListing.ebayOfferId,
+          {
+            sku: validatedData.ebaySku,
+            marketplaceId: "EBAY_US",
+            format: "FIXED_PRICE",
+            merchantLocationKey,
+            listingPolicies: {
+              paymentPolicyId: selectedPaymentPolicy.paymentPolicyId,
+              returnPolicyId: selectedReturnPolicy.returnPolicyId,
+              fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId,
             },
+            pricingSummary: {
+              price: {
+                value: (validatedData.priceCents / 100).toFixed(2),
+                currency: "USD",
+              },
+            },
+            categoryId: validatedData.categoryId || existingListing.categoryId,
+            availableQuantity: targetQuantity,
           },
-          categoryId: validatedData.categoryId || existingListing.categoryId,
-          availableQuantity: targetQuantity,
-        });
+          { tracer, operationName: "Update offer" }
+        );
 
         // Republish if needed
         if (comparison.nonRevisableChanges.length > 0 && currentOffer.status !== "PUBLISHED") {
-          await ebayClient.publishOffer(existingListing.ebayOfferId);
+          await ebayClient.publishOffer(existingListing.ebayOfferId, {
+            tracer,
+            operationName: "Republish offer",
+          });
         }
 
         console.log(`[Edit Listing] Successfully updated eBay listing ${existingListing.ebayItemId}`);
@@ -2023,11 +2047,51 @@ Output only JSON:
       });
     } catch (error: any) {
       console.error("[Edit Listing] Error:", error);
-      
-      res.status(500).json({ 
+
+      const failedStep = tracer.getFailedStep();
+      const isEbayApiError = error instanceof EbayApiError;
+      let ebayErrorResponse: any = null;
+
+      if (isEbayApiError && typeof error.context.responseBody === "object") {
+        ebayErrorResponse = error.context.responseBody;
+      }
+
+      if (failedStep?.responseBody && typeof failedStep.responseBody === "object") {
+        ebayErrorResponse = failedStep.responseBody;
+      }
+
+      const errorResponse: any = {
+        success: false,
         error: error.message,
         trace: tracer.getTrace(),
-      });
+        failedStep,
+      };
+
+      if (isEbayApiError) {
+        errorResponse.ebayContext = error.context;
+      }
+
+      if (ebayErrorResponse?.errors) {
+        errorResponse.ebayErrors = ebayErrorResponse.errors;
+        errorResponse.ebayErrorDetails = ebayErrorResponse;
+        errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+          const parts = [
+            err.errorId ? `[${err.errorId}]` : "",
+            err.message || err.longMessage || "Unknown error",
+          ].filter(Boolean);
+
+          if (err.parameters && err.parameters.length > 0) {
+            parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(", ")})`);
+          }
+
+          return parts.join(" ");
+        });
+      } else {
+        errorResponse.details = [error.message];
+      }
+
+      const statusCode = isEbayApiError && error.status ? error.status : 500;
+      res.status(statusCode).json(errorResponse);
     }
   });
 

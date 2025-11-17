@@ -304,10 +304,10 @@ export class EbayClient {
   /**
    * Create or update an inventory item
    */
-  async upsertInventoryItem(sku: string, item: any): Promise<void> {
+  async upsertInventoryItem(sku: string, item: any, options?: { tracer?: ApiTracer; operationName?: string }): Promise<void> {
     await this.request<void>(
       `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
-      { method: 'PUT', body: item }
+      { method: 'PUT', body: item, ...options }
     );
     console.log(`[EbayClient] Inventory item upserted: ${sku}`);
   }
@@ -401,9 +401,10 @@ export class EbayClient {
   /**
    * Get a single offer by ID
    */
-  async getOffer(offerId: string): Promise<EbayOffer> {
+  async getOffer(offerId: string, options?: { tracer?: ApiTracer; operationName?: string }): Promise<EbayOffer> {
     return this.request<EbayOffer>(
-      `/sell/inventory/v1/offer/${offerId}`
+      `/sell/inventory/v1/offer/${offerId}`,
+      options
     );
   }
 
@@ -428,10 +429,10 @@ export class EbayClient {
   /**
    * Update an existing offer
    */
-  async updateOffer(offerId: string, offer: any): Promise<void> {
+  async updateOffer(offerId: string, offer: any, options?: { tracer?: ApiTracer; operationName?: string }): Promise<void> {
     await this.request<void>(
       `/sell/inventory/v1/offer/${offerId}`,
-      { method: 'PUT', body: offer }
+      { method: 'PUT', body: offer, ...options }
     );
     console.log(`[EbayClient] Offer updated: ${offerId}`);
   }
@@ -439,11 +440,11 @@ export class EbayClient {
   /**
    * Publish an offer to create a listing
    */
-  async publishOffer(offerId: string): Promise<{ listingId: string }> {
+  async publishOffer(offerId: string, options?: { tracer?: ApiTracer; operationName?: string }): Promise<{ listingId: string }> {
     console.log(`[EbayClient] Publishing offer: ${offerId}`);
     const result = await this.request<{ listingId: string }>(
       `/sell/inventory/v1/offer/${offerId}/publish`,
-      { method: 'POST' }
+      { method: 'POST', ...options }
     );
 
     if (!result.listingId) {
@@ -531,30 +532,33 @@ export class EbayClient {
   /**
    * Get payment policies
    */
-  async getPaymentPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getPaymentPolicies(marketplaceId: string = MARKETPLACE_ID, options?: { tracer?: ApiTracer; operationName?: string }): Promise<any> {
     return this.request(
-      `/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`,
+      options
     );
   }
 
   /**
    * Get return policies
    */
-  async getReturnPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getReturnPolicies(marketplaceId: string = MARKETPLACE_ID, options?: { tracer?: ApiTracer; operationName?: string }): Promise<any> {
     return this.request(
-      `/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`,
+      options
     );
   }
 
   /**
    * Get or create merchant location
    */
-  async getOrCreateMerchantLocation(): Promise<string> {
+  async getOrCreateMerchantLocation(options?: { tracer?: ApiTracer; operationName?: string }): Promise<string> {
     const locationKey = "DEFAULT_LOCATION";
 
     try {
       await this.request(
-        `/sell/inventory/v1/location/${locationKey}`
+        `/sell/inventory/v1/location/${locationKey}`,
+        options
       );
       console.log(`[EbayClient] Using existing merchant location: ${locationKey}`);
       return locationKey;
@@ -578,7 +582,7 @@ export class EbayClient {
 
       await this.request(
         `/sell/inventory/v1/location/${locationKey}`,
-        { method: 'POST', body: locationData }
+        { method: 'POST', body: locationData, ...options }
       );
 
       console.log(`[EbayClient] Merchant location created: ${locationKey}`);
