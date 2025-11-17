@@ -107,14 +107,17 @@ export default function DraftPage() {
   const [generatedSku, setGeneratedSku] = useState<string>("");
   const [userEditedSku, setUserEditedSku] = useState<boolean>(false);
 
-  const { data: vineItem } = useQuery<VineItem>({
-    queryKey: [`/api/vine-items/${vineItemId}`],
-    enabled: !!vineItemId,
-  });
-
   const { data: listing } = useQuery<any>({
     queryKey: [`/api/listings/${listingId}`],
     enabled: !!listingId,
+  });
+
+  // In edit mode, get vineItemId from listing data
+  const effectiveVineItemId = vineItemId || listing?.vineItemId;
+
+  const { data: vineItem } = useQuery<VineItem>({
+    queryKey: [`/api/vine-items/${effectiveVineItemId}`],
+    enabled: !!effectiveVineItemId,
   });
 
   // Pre-populate form when editing an existing listing
@@ -139,14 +142,19 @@ export default function DraftPage() {
       if (listing.dimsH) setDimsH(listing.dimsH.toString());
       if (listing.weightOz) setWeightOz(listing.weightOz.toString());
       
-      // Set category
+      // Set category (ID and name from listing data)
       if (listing.categoryId) {
         setSelectedCategoryId(listing.categoryId);
+        // If listing has category name, use it; otherwise it will be hydrated by useEffect
+        if (listing.categoryName) {
+          setSelectedCategoryName(listing.categoryName);
+        }
       }
       
-      // Set fulfillment policy
+      // Set fulfillment policy (ID will be set, name will be hydrated by useEffect)
       if (listing.fulfillmentPolicyId) {
         setSelectedFulfillmentPolicyId(listing.fulfillmentPolicyId);
+        // Name will be hydrated once fulfillmentPolicies are loaded (see useEffect lines 277-285)
       }
       
       // Set description (try to parse if structured, otherwise use plain text)
@@ -538,12 +546,19 @@ export default function DraftPage() {
 
       // When editing, use JSON body instead of FormData (no photo uploads)
       if (listingId) {
+        // Calculate final price to send to eBay
+        // When "Includes in Price" mode, send TOTAL (item + shipping)
+        // When "Charge Separately" mode, send item price only
+        const finalPrice = shippingMode === "included" && totalPriceInput
+          ? parseFloat(totalPriceInput)
+          : parseFloat(price);
+        
         const payload = {
           title: editableTitles[selectedTitle],
           description: serializeDescription(editableDescription),
           categoryId: selectedCategoryId,
           fulfillmentPolicyId: selectedFulfillmentPolicyId,
-          priceCents: Math.round(parseFloat(price) * 100),
+          priceCents: Math.round(finalPrice * 100),
           weightOz: parseFloat(weightOz),
           dimsL: parseFloat(dimsL),
           dimsW: parseFloat(dimsW),
@@ -558,6 +573,13 @@ export default function DraftPage() {
       }
 
       // Creating new listing - use FormData for photos
+      // Calculate final price to send to eBay
+      // When "Includes in Price" mode, send TOTAL (item + shipping)
+      // When "Charge Separately" mode, send item price only
+      const finalPrice = shippingMode === "included" && totalPriceInput
+        ? parseFloat(totalPriceInput)
+        : parseFloat(price);
+      
       const formData = new FormData();
       selectedPhotos.forEach((photo) => formData.append("photos", photo));
       formData.append("vineItemId", vineItemId!);
@@ -565,7 +587,7 @@ export default function DraftPage() {
       formData.append("description", serializeDescription(editableDescription));
       formData.append("categoryId", selectedCategoryId);
       formData.append("fulfillmentPolicyId", selectedFulfillmentPolicyId);
-      formData.append("priceCents", String(Math.round(parseFloat(price) * 100)));
+      formData.append("priceCents", String(Math.round(finalPrice * 100)));
       formData.append("weightOz", weightOz);
       formData.append("dimsL", dimsL);
       formData.append("dimsW", dimsW);
@@ -695,6 +717,30 @@ export default function DraftPage() {
                       {vineItem ? new Date(vineItem.receivedDate).toLocaleDateString() : "-"}
                     </div>
                   </div>
+                </div>
+                
+                <Separator />
+                
+                {/* SKU Field */}
+                <div className="space-y-2">
+                  <Label htmlFor="sku">
+                    SKU (Stock Keeping Unit)
+                    <span className="text-xs text-muted-foreground ml-2">• Auto-generated</span>
+                  </Label>
+                  <Input
+                    id="sku"
+                    value={generatedSku}
+                    onChange={(e) => {
+                      setGeneratedSku(e.target.value);
+                      setUserEditedSku(true);
+                    }}
+                    placeholder="AUTO-EZWOP-1234"
+                    className="font-mono text-sm"
+                    data-testid="input-sku"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Automatically generated from item title and ID. You can edit if needed.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -1201,28 +1247,6 @@ export default function DraftPage() {
                   </>
                 ) : (
                   <>
-                    {/* SKU Field */}
-                    <div className="space-y-2">
-                      <Label htmlFor="sku">
-                        SKU (Stock Keeping Unit)
-                        <span className="text-xs text-muted-foreground ml-2">• Auto-generated</span>
-                      </Label>
-                      <Input
-                        id="sku"
-                        value={generatedSku}
-                        onChange={(e) => {
-                          setGeneratedSku(e.target.value);
-                          setUserEditedSku(true);
-                        }}
-                        placeholder="AUTO-EZWOP-1234"
-                        className="font-mono text-sm"
-                        data-testid="input-sku"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        This unique code tracks your inventory. Auto-generated but you can customize it.
-                      </p>
-                    </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="price">Item Price ($)</Label>
