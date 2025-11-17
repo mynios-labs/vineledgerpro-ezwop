@@ -21,7 +21,7 @@ type StatusTab = "available" | "do_not_sell" | "live_listings" | "sold" | "perso
 type SortOrder = "recent" | "oldest" | "price_high" | "price_low" | "six_months_plus";
 
 // Helper function to check if item is less than 6 months old
-const isLessThan6MonthsOld = (receivedDate: string): boolean => {
+const isLessThan6MonthsOld = (receivedDate: string | Date): boolean => {
   const received = new Date(receivedDate);
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);

@@ -1,4 +1,5 @@
 import { getAccessToken, getPublicAccessToken } from './ebay';
+import type { ApiTracer } from './apiTracer';
 
 const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
   ? "https://api.ebay.com"
@@ -125,6 +126,29 @@ interface RequestOptions {
   headers?: Record<string, string>;
   requiresMarketplace?: boolean;
   usePublicToken?: boolean;
+  tracer?: ApiTracer;
+  operationName?: string;
+}
+
+export interface EbayApiErrorContext {
+  endpoint: string;
+  method: string;
+  status?: number;
+  correlationId?: string | null;
+  requestBody?: any;
+  responseBody?: any;
+}
+
+export class EbayApiError extends Error {
+  readonly status?: number;
+  readonly context: EbayApiErrorContext;
+
+  constructor(message: string, context: EbayApiErrorContext) {
+    super(message);
+    this.name = 'EbayApiError';
+    this.status = context.status;
+    this.context = context;
+  }
 }
 
 // ============================================================================
@@ -147,6 +171,8 @@ export class EbayClient {
       headers: customHeaders = {},
       requiresMarketplace = true,
       usePublicToken = false,
+      tracer,
+      operationName,
     } = options;
 
     // Get appropriate token (public for Taxonomy/Commerce, user for Inventory/Sell APIs)

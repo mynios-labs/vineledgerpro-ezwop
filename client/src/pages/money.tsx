@@ -48,6 +48,22 @@ interface MoneyStats {
   defectiveItems: number;
 }
 
+interface TrackingEvent {
+  status_date?: string;
+  status?: string;
+  location?: { city?: string; state?: string };
+}
+
+interface TrackingStatus {
+  status?: string;
+}
+
+interface TrackingData {
+  tracking_status?: TrackingStatus;
+  eta?: string;
+  tracking_history?: TrackingEvent[];
+}
+
 type SortField = "receivedDate" | "publishedAt" | "orderDate" | "netProfitCents" | "saleCents";
 type SortDirection = "asc" | "desc";
 
@@ -65,18 +81,14 @@ export default function MoneyPage() {
     queryKey: ["/api/accounting/items"],
   });
 
-  const { data: trackingData, isLoading: trackingLoading } = useQuery({
+  const { data: trackingData, isLoading: trackingLoading } = useQuery<TrackingData | null>({
     queryKey: [`/api/shippo/tracking/${selectedTracking?.carrier}/${selectedTracking?.trackingNumber}`],
     enabled: !!selectedTracking,
   });
 
   const returnToInventoryMutation = useMutation({
     mutationFn: async ({ inventoryId, reason }: { inventoryId: string; reason: string }) => {
-      return apiRequest(`/api/inventory/${inventoryId}/return`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      });
+      return apiRequest("POST", `/api/inventory/${inventoryId}/return`, { reason });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/items"] });

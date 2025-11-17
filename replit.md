@@ -11,6 +11,17 @@ Preferred communication style: Simple, everyday language.
 ### UI/UX Decisions
 The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives) and Tailwind CSS. The design is inspired by modern business applications like Linear and Stripe Dashboard, emphasizing clarity, data visibility, error prevention, and workflow efficiency. Key pages include Inventory, Draft Listing creation, Orders, Messages & Returns, Money & Ledger, and a Health dashboard.
 
+## Collaboration & Git Workflow
+- **Local branch:** Work from the `work` branch in this repo. If you need to push to GitHub, add a remote (e.g., `git remote add origin https://github.com/<owner>/<repo>.git`).
+- **Typical flow:**
+  1. `git status` — check for pending changes.
+  2. `git add <files>` — stage updates.
+  3. `git commit -m "<message>"` — record the snapshot.
+  4. `git push origin work` — push to GitHub (replace `work` if you use a different branch).
+  5. In Replit, run `git pull origin work` to sync the latest changes. If using Replit Agent, ask it to pull the same branch.
+- **Main vs. branch:** Unless you explicitly create/use `main`, continue on `work` to keep history consistent. Once a GitHub remote exists, you can open a PR from `work` into `main` if needed.
+- **What to tell Replit Agent:** "Check out branch `work`, run \`git pull origin work\`, install dependencies, and start the dev server."
+
 ### Critical eBay API Configuration
 **IMPORTANT**: eBay Sell APIs require Accept-Language and Content-Language headers to be valid BCP47 locales. Setting these headers to empty strings causes 400 errors because eBay rejects blank values.
 

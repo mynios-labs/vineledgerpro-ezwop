@@ -1,0 +1,1976 @@
++2
+-1
+
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Search, Upload, Package, AlertCircle, AlertTriangle, X, Check, Trash2, ChevronLeft, ChevronRight, ArrowDownUp, User } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useLocation } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { VineItem } from "@shared/schema";
+
+type StatusTab = "available" | "do_not_sell" | "live_listings" | "sold" | "personal_use";
+type SortOrder = "recent" | "oldest" | "price_high" | "price_low" | "six_months_plus";
+
+// Helper function to check if item is less than 6 months old
+const isLessThan6MonthsOld = (receivedDate: string): boolean => {
+const isLessThan6MonthsOld = (receivedDate: string | Date): boolean => {
+  const received = new Date(receivedDate);
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  return received > sixMonthsAgo;
+};
+
+export default function Inventory() {
+  const [, setLocation] = useLocation();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("recent");
+  const [activeTab, setActiveTab] = useState<StatusTab>("available");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [selectedItemForListing, setSelectedItemForListing] = useState<VineItem | null>(null);
+  const { toast } = useToast();
+  
+  const itemsPerPage = 20;
+
+  // Build query string with search, sort, and status parameters
+  const buildQueryString = () => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("search", searchQuery);
+    if (sortOrder) params.set("sort", sortOrder);
+    if (activeTab) params.set("status", activeTab);
+    const queryString = params.toString();
+    return queryString ? `?${queryString}` : "";
+  };
+
+  const { data: vineItems, isLoading } = useQuery<VineItem[]>({
+    queryKey: [`/api/vine-items${buildQueryString()}`],
+  });
+
+  const { data: stats } = useQuery<{
+    total: number;
+    available: number;
+    do_not_sell: number;
+    personal_use: number;
+    gone: number;
+    returned: number;
+    discarded: number;
+    live_listings: number;
+    sold: number;
+    cancelled?: number;
+  }>({
+    queryKey: ["/api/vine-items/stats"],
+  });
+
+  const toggleDefectiveMutation = useMutation({
+    mutationFn: async ({ vineItemId, defective, currentNotes }: { vineItemId: string; defective: boolean; currentNotes?: string | null }) => {
+      return await apiRequest("PATCH", `/api/vine-items/${vineItemId}/defective`, {
+        defective,
+        defectiveNotes: defective 
+          ? (currentNotes || "Marked as defective from inventory page")
+          : null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ 
+        predicate: (query) => {
+          const key = query.queryKey[0];
+          return typeof key === 'string' && key.startsWith('/api/vine-items');
+        }
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/vine-items/stats"] });
+      toast({
+        title: "Success",
+        description: "Item defective status updated",
+      });
+client/src/pages/money.tsx
++18
+-6
+
+@@ -26,79 +26,91 @@ interface ItemFinancials {
+  saleCents: number;
+  feesCents: number;
+  shippingCostsCents: number;
+  netProfitCents: number;
+  defective: boolean;
+  defectiveNotes?: string;
+  tracking?: string;
+  carrier?: string;
+  orderId?: string;
+}
+
+interface MoneyStats {
+  totalSales: number;
+  totalFees: number;
+  totalShipping: number;
+  totalPayout: number;
+  realizedGain: number;
+  realizedLoss: number;
+  totalListings: number;
+  activeListings: number;
+  totalOrders: number;
+  pendingShipments: number;
+  defectiveItems: number;
+}
+
+interface TrackingEvent {
+  status_date?: string;
+  status?: string;
+  location?: { city?: string; state?: string };
+}
+
+interface TrackingStatus {
+  status?: string;
+}
+
+interface TrackingData {
+  tracking_status?: TrackingStatus;
+  eta?: string;
+  tracking_history?: TrackingEvent[];
+}
+
+type SortField = "receivedDate" | "publishedAt" | "orderDate" | "netProfitCents" | "saleCents";
+type SortDirection = "asc" | "desc";
+
+export default function MoneyPage() {
+  const { toast } = useToast();
+  const [sortField, setSortField] = useState<SortField>("receivedDate");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [selectedTracking, setSelectedTracking] = useState<{ carrier: string; trackingNumber: string } | null>(null);
+
+  const { data: stats, isLoading: statsLoading } = useQuery<MoneyStats>({
+    queryKey: ["/api/accounting/stats"],
+  });
+
+  const { data: items, isLoading: itemsLoading } = useQuery<ItemFinancials[]>({
+    queryKey: ["/api/accounting/items"],
+  });
+
+  const { data: trackingData, isLoading: trackingLoading } = useQuery({
+  const { data: trackingData, isLoading: trackingLoading } = useQuery<TrackingData | null>({
+    queryKey: [`/api/shippo/tracking/${selectedTracking?.carrier}/${selectedTracking?.trackingNumber}`],
+    enabled: !!selectedTracking,
+  });
+
+  const returnToInventoryMutation = useMutation({
+    mutationFn: async ({ inventoryId, reason }: { inventoryId: string; reason: string }) => {
+      return apiRequest(`/api/inventory/${inventoryId}/return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      return apiRequest("POST", `/api/inventory/${inventoryId}/return`, { reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounting/stats"] });
+      toast({ title: "Success", description: "Item returned to inventory" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleExportCSV = () => {
+    window.open("/api/accounting/export/csv", "_blank");
+  };
+
+  const handleExportPDF = () => {
+    window.open("/api/accounting/export/pdf", "_blank");
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+replit.md
++11
+-0
+
+# eBay Resale & Bookkeeping Platform
+
+## Overview
+This platform is a privacy-first eBay resale application designed for Amazon Vine reviewers. Its primary purpose is to automate the entire resale workflow, from importing Vine item data and creating privacy-compliant eBay listings to managing orders, generating shipping labels, and producing CPA-ready tax reports. The project aims to streamline the selling process, ensure compliance with Amazon's terms of service, and provide comprehensive financial tracking for tax purposes.
+
+## User Preferences
+Preferred communication style: Simple, everyday language.
+
+## System Architecture
+
+### UI/UX Decisions
+The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives) and Tailwind CSS. The design is inspired by modern business applications like Linear and Stripe Dashboard, emphasizing clarity, data visibility, error prevention, and workflow efficiency. Key pages include Inventory, Draft Listing creation, Orders, Messages & Returns, Money & Ledger, and a Health dashboard.
+
+## Collaboration & Git Workflow
+- **Local branch:** Work from the `work` branch in this repo. If you need to push to GitHub, add a remote (e.g., `git remote add origin https://github.com/<owner>/<repo>.git`).
+- **Typical flow:**
+  1. `git status` — check for pending changes.
+  2. `git add <files>` — stage updates.
+  3. `git commit -m "<message>"` — record the snapshot.
+  4. `git push origin work` — push to GitHub (replace `work` if you use a different branch).
+  5. In Replit, run `git pull origin work` to sync the latest changes. If using Replit Agent, ask it to pull the same branch.
+- **Main vs. branch:** Unless you explicitly create/use `main`, continue on `work` to keep history consistent. Once a GitHub remote exists, you can open a PR from `work` into `main` if needed.
+- **What to tell Replit Agent:** “Check out branch `work`, run \\`git pull origin work\\`, install dependencies, and start the dev server.”
+
+### Critical eBay API Configuration
+**IMPORTANT**: eBay Sell APIs require Accept-Language and Content-Language headers to be valid BCP47 locales. Setting these headers to empty strings causes 400 errors because eBay rejects blank values.
+
+**Solution**: Set these headers to a valid locale (e.g., "en-US") in all eBay API requests:
+```typescript
+headersObj.set('Accept-Language', 'en-US');
+headersObj.set('Content-Language', 'en-US');
+```
+
+This ensures eBay accepts the requests and prevents 400 "Invalid value for header Content-Language" errors. All eBay API calls are centralized through the EbayClient class (server/lib/EbayClient.ts) which handles proper header configuration.
+
+### Technical Implementations
+
+#### Frontend
+-   **Framework:** React 18, Vite
+-   **UI:** shadcn/ui, Tailwind CSS
+-   **State Management:** TanStack Query
+-   **Routing:** Wouter
+-   **Key Features:**
+    -   Inventory management with status tabs (Available, Do Not Sell, Sold/Live, Personal Use) and search/sort.
+    -   Item-centric Money & Ledger page with financial statistics and lifecycle view.
+    -   Comprehensive Tax Report page with Amazon and eBay 1099 reconciliation, including smart validation before printing.
+    -   Draft listing workflow for manual price and dimension entry, with UPS shipping estimates.
+
+#### Backend
+server/lib/EbayClient.ts
++156
+-29
+
+import type { ApiTracer } from './apiTracer';
+import { getAccessToken, getPublicAccessToken } from './ebay';
+
+const EBAY_API_BASE = process.env.EBAY_ENV === "production" 
+  ? "https://api.ebay.com"
+  : "https://api.sandbox.ebay.com";
+
+const EBAY_APIZ_BASE = process.env.EBAY_ENV === "production"
+  ? "https://apiz.ebay.com"
+  : "https://apiz.sandbox.ebay.com";
+
+const MARKETPLACE_ID = "EBAY_US";
+
+// ============================================================================
+// Types & Interfaces
+// ============================================================================
+
+export interface EbayOffer {
+  offerId: string;
+  sku: string;
+  status: 'PUBLISHED' | 'UNPUBLISHED' | 'ENDED';
+  marketplaceId: string;
+  format: string;
+  availableQuantity?: number;
+  pricingSummary?: {
+    price?: {
+@@ -54,249 +55,339 @@ export interface EbayInventoryItem {
+  };
+  packageWeightAndSize?: {
+    dimensions?: {
+      height?: number;
+      length?: number;
+      width?: number;
+      unit?: string;
+    };
+    weight?: {
+      value?: number;
+      unit?: string;
+    };
+  };
+}
+
+export interface EbayOrder {
+  orderId: string;
+  creationDate: string;
+  orderFulfillmentStatus: string;
+  orderPaymentStatus: string;
+  pricingSummary: {
+    total: { value: string; currency: string; };
+    deliveryCost?: { value: string; currency: string; };
+    tax?: { value: string; currency: string; };
+  };
+  buyer: { 
+  buyer: {
+    username: string;
+    buyerRegistrationAddress?: {
+      fullName?: string;
+      contactAddress?: {
+        addressLine1?: string;
+        addressLine2?: string;
+        city?: string;
+        stateOrProvince?: string;
+        postalCode?: string;
+        countryCode?: string;
+      };
+      email?: { emailAddress?: string };
+    };
+  };
+  lineItems: Array<{
+    lineItemId?: string;
+    legacyItemId?: string;
+    sku: string;
+    title: string;
+    quantity: number;
+  }>;
+  paidTime?: string;
+  fulfillmentStartInstructions?: Array<{
+    ebaySupportedFulfillment?: boolean;
+    shipByDate?: string;
+    shippingStep?: {
+      shipTo?: {
+        fullName?: string;
+        contactAddress?: {
+          addressLine1?: string;
+          addressLine2?: string;
+          city?: string;
+          stateOrProvince?: string;
+          postalCode?: string;
+          countryCode?: string;
+        };
+        primaryPhone?: {
+          phoneNumber?: string;
+        };
+      };
+      shipment?: {
+        trackingNumber?: string;
+        carrier?: string;
+      };
+    };
+  }>;
+}
+
+interface RequestOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  body?: any;
+  headers?: Record<string, string>;
+  requiresMarketplace?: boolean;
+  usePublicToken?: boolean;
+  tracer?: ApiTracer;
+  operationName?: string;
+}
+
+export interface EbayApiErrorContext {
+  endpoint: string;
+  method: string;
+  status?: number;
+  correlationId?: string | null;
+  requestBody?: any;
+  responseBody?: any;
+}
+
+export class EbayApiError extends Error {
+  readonly status?: number;
+  readonly context: EbayApiErrorContext;
+
+  constructor(message: string, context: EbayApiErrorContext) {
+    super(message);
+    this.name = 'EbayApiError';
+    this.status = context.status;
+    this.context = context;
+  }
+}
+
+// ============================================================================
+// Main EbayClient Class
+// ============================================================================
+
+export class EbayClient {
+  private token: string | null = null;
+
+  /**
+   * Core HTTP request handler - ALL eBay API calls go through here
+   */
+  private async request<T>(
+    endpoint: string,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const {
+      method = 'GET',
+      body,
+      headers: customHeaders = {},
+      requiresMarketplace = true,
+      usePublicToken = false,
+      tracer,
+      operationName,
+    } = options;
+
+    // Get appropriate token (public for Taxonomy/Commerce, user for Inventory/Sell APIs)
+    let token: string;
+    if (usePublicToken) {
+      token = await getPublicAccessToken();
+    } else {
+      if (!this.token) {
+        this.token = await getAccessToken();
+      }
+      token = this.token;
+    }
+
+    const url = endpoint.startsWith('http') 
+      ? endpoint 
+      : `${EBAY_API_BASE}${endpoint}`;
+
+    // Build headers - CENTRALIZED HEADER LOGIC
+    // Use Headers object and set proper locale headers
+    const headersObj = new Headers();
+    headersObj.set('Authorization', `Bearer ${token}`);
+    headersObj.set('Content-Type', 'application/json');
+    headersObj.set('Accept', 'application/json');
+    
+    // Set proper locale headers - eBay requires valid BCP47 locale, not empty strings
+    headersObj.set('Accept-Language', 'en-US');
+    headersObj.set('Content-Language', 'en-US');
+
+    // Add marketplace header for endpoints that need it
+    if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
+      headersObj.set('X-EBAY-C-MARKETPLACE-ID', MARKETPLACE_ID);
+    }
+
+    // Add custom headers if provided
+    for (const [key, value] of Object.entries(customHeaders)) {
+      headersObj.set(key, value);
+    }
+
+    const fetchOptions: RequestInit = {
+      method,
+      headers: headersObj,
+      body: body ? JSON.stringify(body) : undefined,
+    };
+
+    console.log(`[EbayClient] ${method} ${endpoint}`);
+
+    try {
+      const response = await fetch(url, fetchOptions);
+      const executor = () => fetch(url, fetchOptions);
+      const stepName = operationName || `[EbayClient] ${method} ${endpoint}`;
+
+      if (tracer) {
+        const { response, data } = await tracer.trace<any>(
+          stepName,
+          method,
+          url,
+          fetchOptions,
+          executor,
+          (responseData, resp) => {
+            if (!resp.ok) {
+              return `HTTP ${resp.status}: ${JSON.stringify(responseData)}`;
+            }
+            return null;
+          }
+        );
+
+        if (!response.ok) {
+          if (response.status === 429) {
+            const retryAfter = response.headers.get('Retry-After');
+            const delay = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+            console.log(`[EbayClient] Rate limited, retrying after ${delay}ms`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return this.request<T>(endpoint, options); // Retry once
+          }
+
+          throw new EbayApiError(
+            `eBay API error ${response.status}: ${JSON.stringify(data)}`,
+            {
+              endpoint,
+              method,
+              status: response.status,
+              correlationId: response.headers.get('x-ebay-c-correlation-id'),
+              requestBody: body,
+              responseBody: data,
+            }
+          );
+        }
+
+        return data as T;
+      }
+
+      const response = await executor();
+      const responseText = await response.text();
+
+      if (!response.ok) {
+        // Handle rate limiting with retry
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After');
+          const delay = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+          console.log(`[EbayClient] Rate limited, retrying after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.request<T>(endpoint, options); // Retry once
+        }
+
+        // Parse error response
+        let errorData;
+        try {
+          errorData = JSON.parse(responseText);
+        } catch {
+          errorData = { message: responseText };
+        }
+
+        throw new Error(
+          `eBay API error ${response.status}: ${JSON.stringify(errorData)}`
+        throw new EbayApiError(
+          `eBay API error ${response.status}: ${JSON.stringify(errorData)}`,
+          {
+            endpoint,
+            method,
+            status: response.status,
+            correlationId: response.headers.get('x-ebay-c-correlation-id'),
+            requestBody: body,
+            responseBody: errorData,
+          }
+        );
+      }
+
+      return responseText ? JSON.parse(responseText) : null;
+    } catch (error) {
+      console.error(`[EbayClient] Request failed:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Paginated request handler - for endpoints that return lists
+   */
+  private async *requestPaginated<T>(
+    endpoint: string,
+    itemsKey: string,
+    limit: number = 200
+  ): AsyncGenerator<T[]> {
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const separator = endpoint.includes('?') ? '&' : '?';
+      const url = `${endpoint}${separator}limit=${limit}&offset=${offset}`;
+      
+      const response: any = await this.request(url);
+      const items = response[itemsKey] || [];
+
+      if (items.length > 0) {
+        yield items;
+        offset += items.length;
+        hasMore = items.length === limit;
+      } else {
+        hasMore = false;
+      }
+    }
+  }
+
+  // ============================================================================
+  // INVENTORY API - Manage inventory items and offers
+  // ============================================================================
+
+  /**
+   * Get or create an inventory item by SKU
+   */
+  async getInventoryItem(sku: string): Promise<EbayInventoryItem> {
+  async getInventoryItem(
+    sku: string,
+    options: Partial<RequestOptions> = {}
+  ): Promise<EbayInventoryItem> {
+    return this.request<EbayInventoryItem>(
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Create or update an inventory item
+   */
+  async upsertInventoryItem(sku: string, item: any): Promise<void> {
+  async upsertInventoryItem(
+    sku: string,
+    item: any,
+    options: Partial<RequestOptions> = {}
+  ): Promise<void> {
+    await this.request<void>(
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+      { method: 'PUT', body: item }
+      { method: 'PUT', body: item, ...options } as RequestOptions
+    );
+    console.log(`[EbayClient] Inventory item upserted: ${sku}`);
+  }
+
+  /**
+   * Get all offers (paginated)
+   * NOTE: This can fail if account has any listings with invalid SKUs
+   */
+  async *getAllOffers(): AsyncGenerator<EbayOffer[]> {
+    yield* this.requestPaginated<EbayOffer>(
+      `/sell/inventory/v1/offer?marketplace_id=${MARKETPLACE_ID}`,
+      'offers'
+    );
+  }
+
+  /**
+   * Get active listings using Trading API (more robust than Inventory API)
+   * Falls back gracefully when Inventory API fails due to invalid SKUs
+   */
+  async getActiveListingsViaTrading(): Promise<Array<{
+    itemId: string;
+    title: string;
+    sku?: string;
+    quantity: number;
+    price: number;
+@@ -337,119 +428,140 @@ export class EbayClient {
+
+    const xmlText = await response.text();
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      parseAttributeValue: true,
+    });
+    const result = parser.parse(xmlText);
+
+    const items = result?.GetMyeBaySellingResponse?.ActiveList?.ItemArray?.Item || [];
+    const itemArray = Array.isArray(items) ? items : [items];
+
+    return itemArray
+      .filter((item: any) => item?.ItemID)
+      .map((item: any) => ({
+        itemId: String(item.ItemID),  // Convert to string to match database type
+        title: item.Title || '',
+        sku: item.SKU || null,
+        quantity: parseInt(item.QuantityAvailable || item.Quantity || '0', 10),
+        price: parseFloat(item.SellingStatus?.CurrentPrice?.['#text'] || item.BuyItNowPrice?.['#text'] || '0'),
+      }));
+  }
+
+  /**
+   * Get offers for a specific SKU
+   */
+  async getOffersBySku(sku: string): Promise<{ offers: EbayOffer[] }> {
+  async getOffersBySku(
+    sku: string,
+    options: Partial<RequestOptions> = {}
+  ): Promise<{ offers: EbayOffer[] }> {
+    return this.request<{ offers: EbayOffer[] }>(
+      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${MARKETPLACE_ID}`
+      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${MARKETPLACE_ID}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Get a single offer by ID
+   */
+  async getOffer(offerId: string): Promise<EbayOffer> {
+  async getOffer(
+    offerId: string,
+    options: Partial<RequestOptions> = {}
+  ): Promise<EbayOffer> {
+    return this.request<EbayOffer>(
+      `/sell/inventory/v1/offer/${offerId}`
+      `/sell/inventory/v1/offer/${offerId}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Create a new offer
+   */
+  async createOffer(offer: any): Promise<{ offerId: string }> {
+  async createOffer(
+    offer: any,
+    options: Partial<RequestOptions> = {}
+  ): Promise<{ offerId: string }> {
+    console.log(`[EbayClient] Creating offer for SKU: ${offer.sku}`);
+    const result = await this.request<{ offerId: string }>(
+      '/sell/inventory/v1/offer',
+      { method: 'POST', body: offer }
+      { method: 'POST', body: offer, ...options } as RequestOptions
+    );
+
+    if (!result.offerId) {
+      throw new Error('eBay create offer failed: No offerId in response');
+    }
+
+    console.log(`[EbayClient] Offer created: ${result.offerId}`);
+    return result;
+  }
+
+  /**
+   * Update an existing offer
+   */
+  async updateOffer(offerId: string, offer: any): Promise<void> {
+  async updateOffer(
+    offerId: string,
+    offer: any,
+    options: Partial<RequestOptions> = {}
+  ): Promise<void> {
+    await this.request<void>(
+      `/sell/inventory/v1/offer/${offerId}`,
+      { method: 'PUT', body: offer }
+      { method: 'PUT', body: offer, ...options } as RequestOptions
+    );
+    console.log(`[EbayClient] Offer updated: ${offerId}`);
+  }
+
+  /**
+   * Publish an offer to create a listing
+   */
+  async publishOffer(offerId: string): Promise<{ listingId: string }> {
+  async publishOffer(
+    offerId: string,
+    options: Partial<RequestOptions> = {}
+  ): Promise<{ listingId: string }> {
+    console.log(`[EbayClient] Publishing offer: ${offerId}`);
+    const result = await this.request<{ listingId: string }>(
+      `/sell/inventory/v1/offer/${offerId}/publish`,
+      { method: 'POST' }
+      { method: 'POST', ...options } as RequestOptions
+    );
+
+    if (!result.listingId) {
+      throw new Error('eBay publish offer failed: No listingId in response');
+    }
+
+    console.log(`[EbayClient] Offer published. Listing ID: ${result.listingId}`);
+    return result;
+  }
+
+  /**
+   * Withdraw (end) an offer
+   */
+  async withdrawOffer(offerId: string): Promise<void> {
+  async withdrawOffer(
+    offerId: string,
+    options: Partial<RequestOptions> = {}
+  ): Promise<void> {
+    await this.request<void>(
+      `/sell/inventory/v1/offer/${offerId}/withdraw`,
+      { method: 'POST' }
+      { method: 'POST', ...options } as RequestOptions
+    );
+    console.log(`[EbayClient] Offer withdrawn: ${offerId}`);
+  }
+
+  // ============================================================================
+  // FULFILLMENT API - Manage orders and shipping
+  // ============================================================================
+
+  /**
+   * Get all orders (paginated async generator)
+   */
+  async *getAllOrders(since?: Date): AsyncGenerator<EbayOrder[]> {
+    const sinceDate = since || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const filter = `creationdate:[${sinceDate.toISOString()}..]`;
+    
+    yield* this.requestPaginated<EbayOrder>(
+      `/sell/fulfillment/v1/order?filter=${encodeURIComponent(filter)}`,
+      'orders'
+    );
+  }
+
+  /**
+   * Get a single order by ID
+   */
+  async getOrder(orderId: string): Promise<EbayOrder> {
+@@ -467,107 +579,122 @@ export class EbayClient {
+    trackingNumber: string;
+    shippingCarrierCode: string;
+  }): Promise<{ fulfillmentId: string }> {
+    const body = {
+      lineItems: params.lineItems,
+      trackingNumber: params.trackingNumber,
+      shippingCarrierCode: params.shippingCarrierCode,
+      shippedTime: new Date().toISOString(),
+    };
+
+    const response = await this.request<any>(
+      `/sell/fulfillment/v1/order/${params.orderId}/shipping_fulfillment`,
+      { method: 'POST', body }
+    );
+
+    return { fulfillmentId: response.fulfillmentId };
+  }
+
+  // ============================================================================
+  // ACCOUNT API - Business policies and settings
+  // ============================================================================
+
+  /**
+   * Get fulfillment policies
+   */
+  async getFulfillmentPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getFulfillmentPolicies(
+    marketplaceId: string = MARKETPLACE_ID,
+    options: Partial<RequestOptions> = {}
+  ): Promise<any> {
+    return this.request(
+      `/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Get payment policies
+   */
+  async getPaymentPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getPaymentPolicies(
+    marketplaceId: string = MARKETPLACE_ID,
+    options: Partial<RequestOptions> = {}
+  ): Promise<any> {
+    return this.request(
+      `/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Get return policies
+   */
+  async getReturnPolicies(marketplaceId: string = MARKETPLACE_ID): Promise<any> {
+  async getReturnPolicies(
+    marketplaceId: string = MARKETPLACE_ID,
+    options: Partial<RequestOptions> = {}
+  ): Promise<any> {
+    return this.request(
+      `/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`
+      `/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`,
+      options as RequestOptions
+    );
+  }
+
+  /**
+   * Get or create merchant location
+   */
+  async getOrCreateMerchantLocation(): Promise<string> {
+  async getOrCreateMerchantLocation(
+    options: Partial<RequestOptions> = {}
+  ): Promise<string> {
+    const locationKey = "DEFAULT_LOCATION";
+
+    try {
+      await this.request(
+        `/sell/inventory/v1/location/${locationKey}`
+        `/sell/inventory/v1/location/${locationKey}`,
+        options as RequestOptions
+      );
+      console.log(`[EbayClient] Using existing merchant location: ${locationKey}`);
+      return locationKey;
+    } catch (error) {
+      // Location doesn't exist, create it
+      const locationData = {
+        location: {
+          address: {
+            addressLine1: "123 Main St",
+            city: "San Jose",
+            stateOrProvince: "CA",
+            postalCode: "95131",
+            country: "US",
+          },
+        },
+        locationInstructions: "Default shipping location",
+        name: "Default Location",
+        merchantLocationStatus: "ENABLED",
+        locationTypes: ["WAREHOUSE"],
+      };
+
+      await this.request(
+        `/sell/inventory/v1/location/${locationKey}`,
+        { method: 'POST', body: locationData }
+        { method: 'POST', body: locationData, ...options } as RequestOptions
+      );
+
+      console.log(`[EbayClient] Merchant location created: ${locationKey}`);
+      return locationKey;
+    }
+  }
+
+  // ============================================================================
+  // COMMERCE/TAXONOMY API - Categories and product data
+  // ============================================================================
+
+  /**
+   * Get suggested categories for keywords
+   * Uses public API token (client credentials) for Taxonomy API
+   */
+  async getSuggestedCategories(keywords: string): Promise<any> {
+    return this.request(
+      `/commerce/taxonomy/v1/category_tree/0/get_category_suggestions?q=${encodeURIComponent(keywords)}`,
+      { requiresMarketplace: false, usePublicToken: true }
+    );
+  }
+
+  /**
+   * Get category details
+   * Uses public API token (client credentials) for Taxonomy API
+server/routes.ts
++76
+-48
+
+@@ -20,51 +20,51 @@ import {
+  businessPolicies,
+  photoSets,
+  healthEvents,
+  importConflicts,
+  amazon1099Data,
+  ebay1099Data,
+  config,
+  type InsertImport,
+  type InsertImportRow,
+  type InsertVineItem,
+  type InsertInventoryItem,
+  type InsertListing,
+  type InsertAccountingLedger,
+  type InsertOrderTimelineEvent,
+  insertOrderTimelineEventSchema,
+  insertAmazon1099Schema,
+  insertEbay1099Schema,
+  insertConfigSchema,
+} from "@shared/schema";
+import { openai } from "./lib/openai";
+import { z } from "zod";
+import { getAccessToken } from "./lib/ebay";
+import { estimateShipping, createShipment, purchaseLabel, getTracking, getTransaction, listAllTransactions, requestRefund } from "./lib/shippo";
+import { checkForbiddenWords, checkAsinInText, calculateSimilarity } from "./lib/privacy";
+import { fetchAllEbayListings } from "./lib/ebayListings";
+import { ebayClient } from "./lib/EbayClient";
+import { ebayClient, EbayApiError } from "./lib/EbayClient";
+
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Zod schemas for eBay order validation
+const ebayOrderLineItemSchema = z.object({
+  lineItemId: z.string().min(1).optional(),
+  quantity: z.number().int().positive(),
+  sku: z.string().optional(),
+  title: z.string().optional(),
+  legacyItemId: z.string().optional(),
+  legacyVariationId: z.string().optional(),
+}).refine(
+  (item) => item.lineItemId || item.legacyItemId,
+  { message: "LineItem must have either lineItemId or legacyItemId" }
+);
+
+const ebayOrderSchema = z.object({
+  orderId: z.string(),
+  lineItems: z.array(ebayOrderLineItemSchema).min(1),
+  buyer: z.object({
+    username: z.string().optional(),
+  }).optional(),
+  pricingSummary: z.object({
+    total: z.object({
+      value: z.string().optional(),
+@@ -1199,56 +1199,51 @@ Output only JSON:
+          low: withCushion,
+          high: withCushion,
+        });
+      }
+
+      // Apply 5% cushion to account for estimate inaccuracy
+      const withCushion = Math.round(baseRate * 1.05 * 100) / 100;
+      res.json({
+        low: withCushion,
+        high: withCushion,
+      });
+    } catch (error: any) {
+      console.error("Shipping estimate error:", error);
+      // Fallback estimate with 5% cushion
+      res.json({
+        low: Math.round(5.50 * 1.05 * 100) / 100,
+        high: Math.round(12.00 * 1.05 * 100) / 100,
+      });
+    }
+  });
+
+  // Publish listing (idempotent with API tracing)
+  app.post("/api/listings/publish", upload.array("photos", 12), async (req, res) => {
+    const { ApiTracer } = await import("./lib/apiTracer");
+    const { compareOffers, verifyOfferPublished } = await import("./lib/ebayOfferHelpers");
+    const {
+      getOffersBySku,
+      getOffer,
+      updateOffer,
+      withdrawOffer,
+    } = await import("./lib/ebay");
+    const { selectBestPolicy } = await import("./lib/ebay");
+
+    const tracer = new ApiTracer();
+
+    try {
+      const {
+        vineItemId,
+        title,
+        description,
+        categoryId,
+        priceCents,
+        weightOz,
+        dimsL,
+        dimsW,
+        dimsH,
+        fulfillmentPolicyId,
+      } = req.body;
+
+      // Validate all required fields before processing
+      const photoCount = (req.files as Express.Multer.File[])?.length || 0;
+      const validationErrors = validateListingData({
+        title,
+        description,
+        categoryId,
+        photos: photoCount,
+      });
+@@ -1348,230 +1343,249 @@ Output only JSON:
+        },
+        condition: "NEW",
+        availability: {
+          shipToLocationAvailability: {
+            quantity: 1,
+          },
+        },
+      };
+
+      // Add package weight and dimensions (required by eBay)
+      if (weightOz && dimsL && dimsW && dimsH) {
+        inventoryItemPayload.packageWeightAndSize = {
+          weight: {
+            value: parseFloat(weightOz),
+            unit: "OUNCE",
+          },
+          dimensions: {
+            length: parseFloat(dimsL),
+            width: parseFloat(dimsW),
+            height: parseFloat(dimsH),
+            unit: "INCH",
+          },
+        };
+      }
+
+      await ebayClient.upsertInventoryItem(sku, inventoryItemPayload);
+      await ebayClient.upsertInventoryItem(
+        sku,
+        inventoryItemPayload,
+        { tracer, operationName: "Upsert inventory item" }
+      );
+
+      // Get or create merchant location
+      const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
+      const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation({
+        tracer,
+        operationName: "Get or create merchant location",
+      });
+
+      // Fetch and validate all 3 required business policies
+      const { getFulfillmentPolicies, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
+      
+      // Validate fulfillment policy (user-selected)
+      const fulfillmentPoliciesData = await ebayClient.getFulfillmentPolicies("EBAY_US");
+      const fulfillmentPoliciesData = await ebayClient.getFulfillmentPolicies(
+        "EBAY_US",
+        { tracer, operationName: "Get fulfillment policies" }
+      );
+      const validFulfillmentPolicy = fulfillmentPoliciesData.fulfillmentPolicies?.find((p: any) => p.fulfillmentPolicyId === fulfillmentPolicyId);
+      
+      if (!validFulfillmentPolicy) {
+        throw new Error(
+          `Fulfillment policy ${fulfillmentPolicyId} not found or inactive. ` +
+          `Please select a valid policy from your eBay account's Business Policies.`
+        );
+      }
+      
+      console.log(`[Publish] Using fulfillment policy: ${validFulfillmentPolicy.name} (${fulfillmentPolicyId})`);
+      
+
+      // Auto-select payment policy (prefer default, fallback to first)
+      const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+      const paymentPoliciesData = await ebayClient.getPaymentPolicies(
+        "EBAY_US",
+        { tracer, operationName: "Get payment policies" }
+      );
+      const selectedPaymentPolicy = selectBestPolicy(
+        paymentPoliciesData.paymentPolicies || [],
+        "EBAY_US",
+        "paymentPolicyId"
+      );
+      
+      if (!selectedPaymentPolicy) {
+        throw new Error(
+          "No payment policies found for EBAY_US. " +
+          "Please configure at least one payment policy in eBay Seller Hub > Business Policies."
+        );
+      }
+      
+      const paymentPolicyId = selectedPaymentPolicy.paymentPolicyId;
+      console.log(`[Publish] Auto-selected payment policy: ${selectedPaymentPolicy.name} (${paymentPolicyId})`);
+      
+
+      // Auto-select return policy (prefer default, fallback to first)
+      const returnPoliciesData = await getReturnPolicies("EBAY_US");
+      const returnPoliciesData = await ebayClient.getReturnPolicies(
+        "EBAY_US",
+        { tracer, operationName: "Get return policies" }
+      );
+      const selectedReturnPolicy = selectBestPolicy(
+        returnPoliciesData.returnPolicies || [],
+        "EBAY_US",
+        "returnPolicyId"
+      );
+      
+      if (!selectedReturnPolicy) {
+        throw new Error(
+          "No return policies found for EBAY_US. " +
+          "Please configure at least one return policy in eBay Seller Hub > Business Policies."
+        );
+      }
+      
+      const returnPolicyId = selectedReturnPolicy.returnPolicyId;
+      console.log(`[Publish] Auto-selected return policy: ${selectedReturnPolicy.name} (${returnPolicyId})`);
+
+      // IDEMPOTENT FLOW: Detect existing offers
+      const offersData = await getOffersBySku(sku, "EBAY_US", tracer);
+      const offersData = await ebayClient.getOffersBySku(
+        sku,
+        { tracer, operationName: "Get offers by SKU" }
+      );
+      const existingOffers = offersData.offers || [];
+      
+      // Filter to only ACTIVE offers (exclude ENDED, WITHDRAWN, etc.)
+      const activeOffers = existingOffers.filter((o: any) => 
+        o.marketplaceId === "EBAY_US" && 
+        (o.status === "PUBLISHED" || o.status === "UNPUBLISHED")
+      );
+      const existingOffer = activeOffers[0]; // Use first active offer if multiple exist
+
+      let offerId: string;
+      let itemId: string | null = null;
+      let reusingExistingOffer = false;
+
+      if (existingOffer) {
+        console.log(`[Publish] Found existing ${existingOffer.status} offer ${existingOffer.offerId} for SKU ${sku}`);
+        offerId = existingOffer.offerId;
+        reusingExistingOffer = true;
+
+        // Compare existing offer with new data
+        const comparison = compareOffers(existingOffer, {
+          priceCents: parseInt(priceCents),
+          categoryId,
+          title,
+          description,
+          fulfillmentPolicyId,
+          imageUrls: photoUrls,
+        });
+
+        if (comparison.hasChanges) {
+          console.log(`[Publish] Changes detected: revisable=${comparison.revisableChanges.join(', ')}, non-revisable=${comparison.nonRevisableChanges.join(', ')}`);
+
+          if (comparison.nonRevisableChanges.length > 0) {
+            // Non-revisable changes: withdraw → update → republish
+            if (existingOffer.status === "PUBLISHED") {
+              await withdrawOffer(offerId, tracer);
+              await ebayClient.withdrawOffer(
+                offerId,
+                { tracer, operationName: "Withdraw offer" }
+              );
+            }
+            
+            // Update offer
+            await updateOffer(offerId, {
+            await ebayClient.updateOffer(offerId, {
+              sku,
+              marketplaceId: "EBAY_US",
+              format: "FIXED_PRICE",
+              merchantLocationKey,
+              listingPolicies: {
+                paymentPolicyId,
+                returnPolicyId,
+                fulfillmentPolicyId,
+              },
+              pricingSummary: {
+                price: {
+                  value: (parseInt(priceCents) / 100).toFixed(2),
+                  currency: "USD",
+                },
+              },
+              categoryId,
+            }, tracer);
+            }, { tracer, operationName: "Update offer" });
+
+            // Republish
+            await ebayClient.publishOffer(offerId);
+            await ebayClient.publishOffer(offerId, { tracer, operationName: "Publish offer" });
+          } else if (comparison.revisableChanges.length > 0) {
+            // Only revisable changes: update in-place (revise)
+            await updateOffer(offerId, {
+            await ebayClient.updateOffer(offerId, {
+              sku,
+              marketplaceId: "EBAY_US",
+              format: "FIXED_PRICE",
+              merchantLocationKey,
+              listingPolicies: {
+                paymentPolicyId,
+                returnPolicyId,
+                fulfillmentPolicyId,
+              },
+              pricingSummary: {
+                price: {
+                  value: (parseInt(priceCents) / 100).toFixed(2),
+                  currency: "USD",
+                },
+              },
+              categoryId,
+            }, tracer);
+            }, { tracer, operationName: "Update offer" });
+
+            // If not published, publish now
+            if (existingOffer.status !== "PUBLISHED") {
+              await ebayClient.publishOffer(offerId);
+              await ebayClient.publishOffer(offerId, { tracer, operationName: "Publish offer" });
+            }
+          }
+        } else if (existingOffer.status !== "PUBLISHED") {
+          // No changes but not published - publish it
+          console.log(`[Publish] No changes detected, publishing unpublished offer`);
+          await ebayClient.publishOffer(offerId);
+          await ebayClient.publishOffer(offerId, { tracer, operationName: "Publish offer" });
+        } else {
+          console.log(`[Publish] No changes detected, offer already published`);
+        }
+      } else {
+        // No existing offer - create new one
+        console.log(`[Publish] No existing offer found, creating new offer`);
+        const offerData = await ebayClient.createOffer({
+          sku,
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          merchantLocationKey,
+          listingPolicies: {
+            paymentPolicyId,
+            returnPolicyId,
+            fulfillmentPolicyId,
+          },
+          pricingSummary: {
+            price: {
+              value: (parseInt(priceCents) / 100).toFixed(2),
+              currency: "USD",
+            },
+          },
+          categoryId,
+        });
+        }, { tracer, operationName: "Create offer" });
+
+        offerId = offerData.offerId;
+        await ebayClient.publishOffer(offerId);
+        await ebayClient.publishOffer(offerId, { tracer, operationName: "Publish offer" });
+      }
+
+      // Verify offer published and get itemId
+      const verified = await verifyOfferPublished(
+        (id: string) => getOffer(id, tracer),
+        (id: string) => ebayClient.getOffer(id, { tracer, operationName: "Verify offer" }),
+        offerId,
+        3,
+        2000
+      );
+      itemId = verified.itemId;
+
+      if (!itemId) {
+        throw new Error(`Offer ${offerId} published but itemId not available after verification. Status: ${verified.status}`);
+      }
+
+      // Upsert listing record with offerId and itemId
+      const existingListing = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.inventoryId, inventoryItem.inventoryId))
+        .limit(1);
+
+      let listing;
+      if (existingListing.length > 0) {
+        const [updated] = await db
+          .update(listings)
+          .set({
+            ebayOfferId: offerId,
+            ebayItemId: itemId,
+            categoryId,
+@@ -1629,91 +1643,101 @@ Output only JSON:
+          direction: "debit",
+          txDate: vineItem.receivedDate,
+          note: "Initial basis from ETV",
+        });
+      }
+
+      // Return success with trace and diagnostic info
+      res.json({ 
+        success: true,
+        listing,
+        offerId,
+        itemId,
+        viewUrl: itemId ? `https://www.ebay.com/itm/${itemId}` : undefined,
+        reusingExistingOffer,
+        diagnostics: {
+          sku,
+          packageWeightAndSize: inventoryItemPayload.packageWeightAndSize,
+          fulfillmentPolicyId,
+          categoryId,
+          priceCents: parseInt(priceCents),
+        },
+        trace: tracer.getTrace(),
+      });
+    } catch (error: any) {
+      console.error("[Publish] Error:", error.message);
+      
+
+      // Get the failed step from tracer which has the full eBay error response
+      const failedStep = tracer.getFailedStep();
+      let ebayErrorResponse: any = null;
+      
+      const isEbayApiError = error instanceof EbayApiError;
+
+      if (isEbayApiError && typeof error.context.responseBody === 'object') {
+        ebayErrorResponse = error.context.responseBody;
+      }
+
+      // Extract full eBay error structure from the failed step's response body
+      if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
+        ebayErrorResponse = failedStep.responseBody;
+      }
+
+      // Build detailed error response with complete eBay error structure
+      const errorResponse: any = {
+        success: false,
+        error: error.message,
+        trace: tracer.getTrace(),
+        failedStep,
+      };
+
+      if (isEbayApiError) {
+        errorResponse.ebayContext = error.context;
+      }
+
+      // If we have a full eBay error response, include it verbatim
+      if (ebayErrorResponse?.errors) {
+        errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
+        errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
+        
+        // Create human-readable summary
+        errorResponse.details = ebayErrorResponse.errors.map((err: any) => {
+          const parts = [
+            err.errorId ? `[${err.errorId}]` : '',
+            err.message || err.longMessage || 'Unknown error',
+          ].filter(Boolean);
+          
+          if (err.parameters && err.parameters.length > 0) {
+            parts.push(`(${err.parameters.map((p: any) => `${p.name}: ${p.value}`).join(', ')})`);
+          }
+          
+          return parts.join(' ');
+        });
+      } else {
+        errorResponse.details = [error.message];
+      }
+
+      res.status(400).json(errorResponse);
+      const statusCode = isEbayApiError && error.status ? error.status : 400;
+      res.status(statusCode).json(errorResponse);
+    }
+  });
+
+  // Get all listings with photos
+  app.get("/api/listings", async (_req, res) => {
+    try {
+      const allListings = await db
+        .select({
+          listingId: listings.listingId,
+          inventoryId: listings.inventoryId,
+          ebayOfferId: listings.ebayOfferId,
+          ebayItemId: listings.ebayItemId,
+          categoryId: listings.categoryId,
+          title: listings.title,
+          description: listings.description,
+          priceCents: listings.priceCents,
+          fulfillmentPolicyId: listings.fulfillmentPolicyId,
+          publishedAt: listings.publishedAt,
+          state: listings.state,
+          photoSetId: inventoryItems.photoSetId,
+          weightOz: inventoryItems.weightOz,
+          dimsL: inventoryItems.dimsInL,
+          dimsW: inventoryItems.dimsInW,
+          dimsH: inventoryItems.dimsInH,
+          quantity: inventoryItems.quantity,
+@@ -1920,61 +1944,61 @@ Output only JSON:
+              aspects: {},
+              imageUrls: photoUrls.slice(0, 12),
+            },
+            condition: "NEW",
+            availability: {
+              shipToLocationAvailability: {
+                quantity: targetQuantity,
+              },
+            },
+            packageWeightAndSize: {
+              weight: {
+                value: validatedData.weightOz || invItem.weightOz || 1,
+                unit: "OUNCE",
+              },
+              dimensions: {
+                length: validatedData.dimsL || invItem.dimsInL || 1,
+                width: validatedData.dimsW || invItem.dimsInW || 1,
+                height: validatedData.dimsH || invItem.dimsInH || 1,
+                unit: "INCH",
+              },
+            },
+          });
+        }
+
+        // Get merchant location and policies
+        const { getOrCreateMerchantLocation, getPaymentPolicies, getReturnPolicies, selectBestPolicy } = await import("./lib/ebay");
+        const { selectBestPolicy } = await import("./lib/ebay");
+        const merchantLocationKey = await ebayClient.getOrCreateMerchantLocation();
+        
+        const paymentPoliciesData = await getPaymentPolicies("EBAY_US");
+
+        const paymentPoliciesData = await ebayClient.getPaymentPolicies("EBAY_US");
+        const selectedPaymentPolicy = selectBestPolicy(
+          paymentPoliciesData.paymentPolicies || [],
+          "EBAY_US",
+          "paymentPolicyId"
+        );
+        
+        const returnPoliciesData = await getReturnPolicies("EBAY_US");
+
+        const returnPoliciesData = await ebayClient.getReturnPolicies("EBAY_US");
+        const selectedReturnPolicy = selectBestPolicy(
+          returnPoliciesData.returnPolicies || [],
+          "EBAY_US",
+          "returnPolicyId"
+        );
+
+        // Update offer on eBay
+        await ebayClient.updateOffer(existingListing.ebayOfferId, {
+          sku: validatedData.ebaySku,
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          merchantLocationKey,
+          listingPolicies: {
+            paymentPolicyId: selectedPaymentPolicy.paymentPolicyId,
+            returnPolicyId: selectedReturnPolicy.returnPolicyId,
+            fulfillmentPolicyId: validatedData.fulfillmentPolicyId || existingListing.fulfillmentPolicyId,
+          },
+          pricingSummary: {
+            price: {
+              value: (validatedData.priceCents / 100).toFixed(2),
+              currency: "USD",
+            },
+          },
+          categoryId: validatedData.categoryId || existingListing.categoryId,
+          availableQuantity: targetQuantity,
+@@ -2011,72 +2035,71 @@ Output only JSON:
+
+      if (Object.keys(inventoryUpdates).length > 0) {
+        await db
+          .update(inventoryItems)
+          .set(inventoryUpdates)
+          .where(eq(inventoryItems.inventoryId, existingListing.inventoryId));
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Listing updated successfully",
+        trace: tracer.getTrace(),
+      });
+    } catch (error: any) {
+      console.error("[Edit Listing] Error:", error);
+      
+      res.status(500).json({ 
+        error: error.message,
+        trace: tracer.getTrace(),
+      });
+    }
+  });
+
+  // End/withdraw a listing
+  app.post("/api/listings/:id/end", async (req, res) => {
+    const { withdrawOffer } = await import("./lib/ebay");
+    const { ApiTracer } = await import("./lib/apiTracer");
+    
+    const tracer = new ApiTracer();
+
+    try {
+      const { id } = req.params;
+
+      // Get existing listing
+      const [existingListing] = await db
+        .select()
+        .from(listings)
+        .where(eq(listings.listingId, id));
+
+      if (!existingListing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Withdraw from eBay if published
+      if (existingListing.ebayOfferId && existingListing.state === "live") {
+        try {
+          await withdrawOffer(existingListing.ebayOfferId, tracer);
+          await ebayClient.withdrawOffer(existingListing.ebayOfferId, { tracer, operationName: "Withdraw offer" });
+          console.log(`[End Listing] Successfully withdrew eBay offer ${existingListing.ebayOfferId}`);
+        } catch (ebayError: any) {
+          console.error("[End Listing] eBay withdraw failed:", ebayError.message);
+          // Continue even if eBay withdraw fails
+        }
+      }
+
+      // Update local database
+      await db
+        .update(listings)
+        .set({
+          state: "ended",
+        })
+        .where(eq(listings.listingId, id));
+
+      res.json({ 
+        success: true, 
+        message: "Listing ended successfully",
+        trace: tracer.getTrace(),
+      });
+    } catch (error: any) {
+      console.error("[End Listing] Error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        trace: tracer.getTrace(),
+@@ -2154,50 +2177,51 @@ Output only JSON:
+            
+            if (!existing && sku) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebaySku, sku));
+            }
+
+            if (existing) {
+              console.log(`[Sync] Found existing listing: ${existing.title} (state: ${existing.state})`);
+            }
+
+            // Fetch images from eBay inventory item
+            let photoSetId: string | null = null;
+            try {
+              const invItem = await ebayClient.getInventoryItem(sku);
+              const imageUrls = invItem.product?.imageUrls || [];
+              
+              if (imageUrls.length > 0) {
+                // Check if we already have a photoSet with these exact URLs to avoid duplicates
+                const urlsJson = JSON.stringify(imageUrls);
+                const matchingPhotoSet = allPhotoSets.find(ps => JSON.stringify(ps.urls) === urlsJson);
+                
+                if (matchingPhotoSet) {
+                  photoSetId = matchingPhotoSet.photoSetId;
+                  console.log(`[Sync] Reusing existing photo set (${imageUrls.length} images)`);
+                } else {
+                  const [photoSet] = await db.insert(photoSets).values({
+                    coverUrl: imageUrls[0],
+                    urls: imageUrls,
+                  }).returning();
+                  photoSetId = photoSet.photoSetId;
+                  allPhotoSets.push(photoSet); // Add to cache for future iterations
+                  console.log(`[Sync] Created new photo set with ${imageUrls.length} images`);
+                }
+              }
+            } catch (imageError: any) {
+              console.log(`[Sync] Could not fetch images for SKU ${sku}: ${imageError.message}`);
+            }
+
+            if (!existing) {
+              // Create new inventory and listing
+              const [newInventory] = await db.insert(inventoryItems).values({
+                vineItemId: null,
+                source: "ebay",
+                condition: "New",
+                quantity: item.quantity || 1,
+                privacyPassed: true,
+                photoSetId,
+              }).returning();
+
+              await db.insert(listings).values({
+                inventoryId: newInventory.inventoryId,
+                title,
+@@ -2275,50 +2299,51 @@ Output only JSON:
+              ? Math.round(parseFloat(offer.pricingSummary.price.value) * 100) 
+              : 0;
+            
+            // Map status to state
+            let state: 'live' | 'draft' | 'ended' = 'draft';
+            if (offer.status === 'PUBLISHED') state = 'live';
+            else if (offer.status === 'ENDED') state = 'ended';
+
+            // Fetch images from eBay inventory item
+            let photoSetId: string | null = null;
+            if (sku) {
+              try {
+                const invItem = await ebayClient.getInventoryItem(sku);
+                const imageUrls = invItem.product?.imageUrls || [];
+                
+                if (imageUrls.length > 0) {
+                  // Check if we already have a photoSet with these exact URLs to avoid duplicates
+                  const urlsJson = JSON.stringify(imageUrls);
+                  const matchingPhotoSet = allPhotoSets.find(ps => JSON.stringify(ps.urls) === urlsJson);
+                  
+                  if (matchingPhotoSet) {
+                    photoSetId = matchingPhotoSet.photoSetId;
+                    console.log(`[Sync] Reusing existing photo set (${imageUrls.length} images)`);
+                  } else {
+                    const [photoSet] = await db.insert(photoSets).values({
+                      coverUrl: imageUrls[0],
+                      urls: imageUrls,
+                    }).returning();
+                    photoSetId = photoSet.photoSetId;
+                    allPhotoSets.push(photoSet); // Add to cache for future iterations
+                    console.log(`[Sync] Created new photo set with ${imageUrls.length} images`);
+                  }
+                }
+              } catch (imageError: any) {
+                console.log(`[Sync] Could not fetch images for SKU ${sku}: ${imageError.message}`);
+              }
+            }
+
+            // Find existing listing
+            let existing = null;
+            if (itemId) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebayItemId, itemId));
+            }
+            if (!existing && sku) {
+              [existing] = await db.select().from(listings).where(eq(listings.ebaySku, sku));
+            }
+
+            if (!existing) {
+              // Create new inventory and listing
+              const [newInventory] = await db.insert(inventoryItems).values({
+                vineItemId: null,
+@@ -2703,56 +2728,57 @@ Output only JSON:
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - daysBack);
+
+      let syncedCount = 0;
+      let updatedCount = 0;
+
+      // Stream all orders using async generator
+      for await (const orderBatch of ebayClient.getAllOrders(fromDate)) {
+        for (const ebayOrder of orderBatch) {
+        try {
+          // Wrap each order sync in a transaction for atomicity
+          await db.transaction(async (tx) => {
+            // Check if order already exists
+            const [existingOrder] = await tx
+              .select()
+              .from(orders)
+              .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+
+            if (existingOrder) {
+              updatedCount++;
+              return; // Skip if already synced
+            }
+
+            // Find the listing by eBay item ID
+            const lineItem = ebayOrder.lineItems?.[0];
+            if (!lineItem) return;
+            const lineItemId = lineItem?.lineItemId;
+            if (!lineItem || !lineItemId) return;
+
+            const [listing] = await tx
+              .select()
+              .from(listings)
+              .where(eq(listings.ebayItemId, lineItem.lineItemId));
+              .where(eq(listings.ebayItemId, lineItemId));
+
+            if (!listing) {
+              console.warn(`Listing not found for eBay item ${lineItem.lineItemId}`);
+              return;
+            }
+
+            // Get or create buyer
+            const buyerUsername = ebayOrder.buyer?.username || "unknown";
+            let [buyer] = await tx
+              .select()
+              .from(buyers)
+              .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+
+            if (!buyer) {
+              [buyer] = await tx
+                .insert(buyers)
+                .values({
+                  ebayBuyerUsername: buyerUsername,
+                  emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                })
+                .returning();
+            }
+
+            // Parse eBay order amounts
+            const saleGrossCents = Math.round(
+@@ -2920,51 +2946,52 @@ Output only JSON:
+        } else {
+          // Default to 30 days ago at 00:00 UTC
+          syncStartDate = new Date();
+          syncStartDate.setDate(syncStartDate.getDate() - 30);
+          syncStartDate.setUTCHours(0, 0, 0, 0);
+        }
+      }
+
+      const fromDate = syncStartDate.toISOString();
+      console.log(`[Orders Sync] Starting sync from ${fromDate}`);
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let shippedDetectedCount = 0;
+      const changedOrderIds: string[] = [];
+
+      // Stream all orders using async generator (handles pagination automatically)
+      try {
+        for await (const orderBatch of ebayClient.getAllOrders(syncStartDate)) {
+          // Process each order in the batch
+          for (const ebayOrder of orderBatch) {
+            try {
+              // Process order in transaction for atomicity
+              await db.transaction(async (tx) => {
+                const lineItem = ebayOrder.lineItems?.[0];
+                if (!lineItem) return;
+                const lineItemId = lineItem?.lineItemId;
+                if (!lineItem || (!lineItem.sku && !lineItemId)) return;
+
+                // Check if order already exists
+                const [existingOrder] = await tx
+                  .select()
+                  .from(orders)
+                  .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+
+                // Extract shipping address
+                const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+                const shipToFullAddress = shipTo?.contactAddress ? {
+                  name: shipTo.fullName || '',
+                  street1: shipTo.contactAddress.addressLine1 || '',
+                  street2: shipTo.contactAddress.addressLine2,
+                  city: shipTo.contactAddress.city || '',
+                  state: shipTo.contactAddress.stateOrProvince || '',
+                  postalCode: shipTo.contactAddress.postalCode || '',
+                  country: shipTo.contactAddress.countryCode || 'US',
+                  phone: shipTo.primaryPhone?.phoneNumber,
+                } : null;
+
+                // Parse order amounts
+                const saleGrossCents = Math.round(
+                  parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+                );
+                const shippingCollectedCents = Math.round(
+@@ -3018,57 +3045,57 @@ Output only JSON:
+                    .set({
+                      title: lineItem.title,
+                      buyerName: shipTo?.fullName || null,
+                      shipToFullAddress,
+                      quantityOrdered: lineItem.quantity || 1,
+                      paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : existingOrder.paidTime,
+                      fulfillmentStatus: ebayFulfillmentStatus,
+                      shippingStatus: computedShippingStatus,
+                      ...(driftDetected && {
+                        driftSnapshot,
+                        driftDetectedAt: new Date(),
+                      }),
+                      lastSyncedAt: new Date(),
+                      lastSyncSource: 'manual_sync',
+                    })
+                    .where(eq(orders.orderId, existingOrder.orderId));
+
+                  updatedCount++;
+                  changedOrderIds.push(ebayOrder.orderId);
+                } else {
+                  // Find listing by SKU or line item ID
+                  const [listing] = await tx
+                    .select()
+                    .from(listings)
+                    .where(
+                      lineItem.sku 
+                      lineItem.sku
+                        ? eq(listings.ebaySku, lineItem.sku)
+                        : eq(listings.ebayItemId, lineItem.lineItemId)
+                        : eq(listings.ebayItemId, lineItemId!)
+                    );
+
+                  if (!listing) {
+                    console.warn(`[Orders Sync] Listing not found for SKU ${lineItem.sku} or item ${lineItem.lineItemId}`);
+                    console.warn(`[Orders Sync] Listing not found for SKU ${lineItem.sku} or item ${lineItemId}`);
+                    return;
+                  }
+
+                  // Get or create buyer
+                  const buyerUsername = ebayOrder.buyer?.username || "unknown";
+                  let [buyer] = await tx
+                    .select()
+                    .from(buyers)
+                    .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+
+                  if (!buyer) {
+                    [buyer] = await tx
+                      .insert(buyers)
+                      .values({
+                        ebayBuyerUsername: buyerUsername,
+                        emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                      })
+                      .returning();
+                  }
+
+                  // Create new order
+                  const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+                  
+                  await tx
+                    .insert(orders)
+@@ -4054,51 +4081,52 @@ Output only JSON:
+      if (lastSuccessfulSyncTimestamp) {
+        syncStartDate = lastSuccessfulSyncTimestamp;
+      } else if (mostRecentOrder?.lastSyncedAt) {
+        syncStartDate = mostRecentOrder.lastSyncedAt;
+      } else {
+        // Default to 30 days ago at 00:00 UTC
+        syncStartDate = new Date();
+        syncStartDate.setDate(syncStartDate.getDate() - 30);
+        syncStartDate.setUTCHours(0, 0, 0, 0);
+      }
+
+      const fromDate = syncStartDate.toISOString();
+      console.log(`[Auto-Sync] Syncing from ${fromDate}`);
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let shippedDetectedCount = 0;
+
+      // Stream all orders using async generator (handles pagination automatically)
+      for await (const orderBatch of ebayClient.getAllOrders(syncStartDate)) {
+        // Process each order with drift detection (matching manual sync endpoint logic)
+        for (const ebayOrder of orderBatch) {
+          try {
+            await db.transaction(async (tx) => {
+              const lineItem = ebayOrder.lineItems?.[0];
+              if (!lineItem) return;
+              const lineItemId = lineItem?.lineItemId;
+              if (!lineItem || (!lineItem.sku && !lineItemId)) return;
+
+              const [existingOrder] = await tx
+                .select()
+                .from(orders)
+                .where(eq(orders.ebayOrderId, ebayOrder.orderId));
+
+              // Extract shipping address
+              const shipTo = ebayOrder.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+              const shipToFullAddress = shipTo?.contactAddress ? {
+                name: shipTo.fullName || '',
+                street1: shipTo.contactAddress.addressLine1 || '',
+                street2: shipTo.contactAddress.addressLine2,
+                city: shipTo.contactAddress.city || '',
+                state: shipTo.contactAddress.stateOrProvince || '',
+                postalCode: shipTo.contactAddress.postalCode || '',
+                country: shipTo.contactAddress.countryCode || 'US',
+                phone: shipTo.primaryPhone?.phoneNumber,
+              } : null;
+
+              const saleGrossCents = Math.round(
+                parseFloat(ebayOrder.pricingSummary?.total?.value || "0") * 100
+              );
+              const shippingCollectedCents = Math.round(
+                parseFloat(ebayOrder.pricingSummary?.deliveryCost?.value || "0") * 100
+              );
+@@ -4141,53 +4169,53 @@ Output only JSON:
+                  .update(orders)
+                  .set({
+                    title: lineItem.title,
+                    buyerName: shipTo?.fullName || null,
+                    shipToFullAddress,
+                    quantityOrdered: lineItem.quantity || 1,
+                    paidTime: ebayOrder.paidTime ? new Date(ebayOrder.paidTime) : existingOrder.paidTime,
+                    fulfillmentStatus: ebayFulfillmentStatus,
+                    shippingStatus: computedShippingStatus,
+                    ...(driftDetected && {
+                      driftSnapshot,
+                      driftDetectedAt: new Date(),
+                    }),
+                    lastSyncedAt: new Date(),
+                    lastSyncSource: 'auto_sync',
+                  })
+                  .where(eq(orders.orderId, existingOrder.orderId));
+
+                updatedCount++;
+              } else {
+                // Find listing and create new order
+                const [listing] = await tx
+                  .select()
+                  .from(listings)
+                  .where(
+                    lineItem.sku 
+                    lineItem.sku
+                      ? eq(listings.ebaySku, lineItem.sku)
+                      : eq(listings.ebayItemId, lineItem.lineItemId)
+                      : eq(listings.ebayItemId, lineItemId!)
+                  );
+
+                if (!listing) return;
+
+                const buyerUsername = ebayOrder.buyer?.username || "unknown";
+                let [buyer] = await tx
+                  .select()
+                  .from(buyers)
+                  .where(eq(buyers.ebayBuyerUsername, buyerUsername));
+
+                if (!buyer) {
+                  [buyer] = await tx
+                    .insert(buyers)
+                    .values({
+                      ebayBuyerUsername: buyerUsername,
+                      emailMask: ebayOrder.buyer?.buyerRegistrationAddress?.email?.emailAddress,
+                    })
+                    .returning();
+                }
+
+                const ebayFinalValueFee = Math.round(saleGrossCents * 0.1325);
+                
+                await tx
+                  .insert(orders)
+                  .values({
+server/storage.ts
++8
+-1
+
+import { type User, type InsertUser } from "@shared/schema";
+import { randomUUID } from "crypto";
+
+interface User {
+  id: string;
+  username: string;
+  password: string;
+}
+
+type InsertUser = Omit<User, "id">;
+
+// modify the interface with any CRUD methods
+// you might need
+
+export interface IStorage {
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+}
+
+export class MemStorage implements IStorage {
+  private users: Map<string, User>;
+
+  constructor() {
+    this.users = new Map();
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    return this.users.get(id);
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(
+      (user) => user.username === username,
+    );
+  }
