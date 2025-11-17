@@ -157,6 +157,7 @@ export class EbayApiError extends Error {
 
 export class EbayClient {
   private token: string | null = null;
+  private readonly defaultLocale = (process.env.EBAY_LOCALE || 'en-US').trim();
 
   /**
    * Core HTTP request handler - ALL eBay API calls go through here
@@ -198,8 +199,10 @@ export class EbayClient {
     headersObj.set('Accept', 'application/json');
     
     // Set proper locale headers - eBay requires valid BCP47 locale, not empty strings
-    headersObj.set('Accept-Language', 'en-US');
-    headersObj.set('Content-Language', 'en-US');
+    if (this.defaultLocale) {
+      headersObj.set('Accept-Language', this.defaultLocale);
+      headersObj.set('Content-Language', this.defaultLocale);
+    }
 
     // Add marketplace header for endpoints that need it
     if (requiresMarketplace && !endpoint.includes('/identity/') && !endpoint.includes('/commerce/')) {
@@ -208,6 +211,10 @@ export class EbayClient {
 
     // Add custom headers if provided
     for (const [key, value] of Object.entries(customHeaders)) {
+      // Prevent callers from overriding locale headers with empty strings
+      if ((key.toLowerCase() === 'accept-language' || key.toLowerCase() === 'content-language') && !value) {
+        continue;
+      }
       headersObj.set(key, value);
     }
 

@@ -25,13 +25,32 @@ The frontend uses React 18 with Vite, styled with shadcn/ui (Radix UI primitives
 ### Critical eBay API Configuration
 **IMPORTANT**: eBay Sell APIs require Accept-Language and Content-Language headers to be valid BCP47 locales. Setting these headers to empty strings causes 400 errors because eBay rejects blank values.
 
-**Solution**: Set these headers to a valid locale (e.g., "en-US") in all eBay API requests:
+**Solution**: The EbayClient class (server/lib/EbayClient.ts) handles proper header configuration with:
+- **Configurable Default Locale**: Reads from `process.env.EBAY_LOCALE` (defaults to 'en-US')
+- **Automatic Header Setting**: All requests automatically include valid Accept-Language and Content-Language headers
+- **Empty Header Prevention**: Custom headers with empty locale values are filtered out to prevent overriding the default
+
 ```typescript
-headersObj.set('Accept-Language', 'en-US');
-headersObj.set('Content-Language', 'en-US');
+export class EbayClient {
+  private readonly defaultLocale = (process.env.EBAY_LOCALE || 'en-US').trim();
+  
+  // In request method:
+  if (this.defaultLocale) {
+    headersObj.set('Accept-Language', this.defaultLocale);
+    headersObj.set('Content-Language', this.defaultLocale);
+  }
+  
+  // Filter empty custom locale headers:
+  for (const [key, value] of Object.entries(customHeaders)) {
+    if ((key.toLowerCase() === 'accept-language' || key.toLowerCase() === 'content-language') && !value) {
+      continue; // Prevent overriding with empty strings
+    }
+    headersObj.set(key, value);
+  }
+}
 ```
 
-This ensures eBay accepts the requests and prevents 400 "Invalid value for header Content-Language" errors. All eBay API calls are centralized through the EbayClient class (server/lib/EbayClient.ts) which handles proper header configuration.
+This ensures eBay accepts all requests and prevents 400 "Invalid value for header Content-Language" errors. All eBay API calls are centralized through the EbayClient class.
 
 ### Technical Implementations
 
