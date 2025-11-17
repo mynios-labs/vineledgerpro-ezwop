@@ -1741,13 +1741,19 @@ Output only JSON:
         
         if (missingSpecificsError) {
           // Extract required field names from error parameters
-          // eBay returns parameters like: [{"name":"2","value":"Type"}]
-          // We want to extract all "value" fields which are the required field names
+          // eBay returns parameters like: [{"name":"2","value":"Brand"}] where the field name is a single word without spaces
+          // We want to extract all "value" fields which are the required field names (single words)
           const requiredFields: string[] = [];
           if (missingSpecificsError.parameters && Array.isArray(missingSpecificsError.parameters)) {
             missingSpecificsError.parameters.forEach((param: any) => {
-              // Look for parameter values that are field names (not messages)
-              if (param.value && !param.value.includes(' ') && param.value !== 'The item specific Type is missing.') {
+              // Look for parameter values that are single words (field names, not error messages)
+              // Field names don't contain spaces, periods, or the word "item"
+              if (param.value && 
+                  typeof param.value === 'string' &&
+                  !param.value.includes(' ') && 
+                  !param.value.includes('.') &&
+                  param.value.toLowerCase() !== 'item' &&
+                  param.value.length > 1) {
                 if (!requiredFields.includes(param.value)) {
                   requiredFields.push(param.value);
                 }
