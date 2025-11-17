@@ -1438,11 +1438,24 @@ Output only JSON:
       console.log(`[Publish] Auto-selected return policy: ${selectedReturnPolicy.name} (${returnPolicyId})`);
 
       // IDEMPOTENT FLOW: Detect existing offers
-      const offersData = await ebayClient.getOffersBySku(sku, {
-        tracer,
-        operationName: "Get existing offers",
-      });
-      const existingOffers = offersData.offers || [];
+      // Note: 404 errors are expected for new listings (no offer exists yet)
+      let existingOffers: any[] = [];
+      try {
+        const offersData = await ebayClient.getOffersBySku(sku, {
+          tracer,
+          operationName: "Get existing offers",
+        });
+        existingOffers = offersData.offers || [];
+      } catch (error: any) {
+        // 404 is expected for new listings - no offer exists yet
+        if (error.message?.includes('404') || error.message?.includes('not available')) {
+          console.log(`[Publish] No existing offers found for SKU ${sku} (expected for new listings)`);
+          existingOffers = [];
+        } else {
+          // Unexpected error - rethrow
+          throw error;
+        }
+      }
       
       // Filter to only ACTIVE offers (exclude ENDED, WITHDRAWN, etc.)
       const activeOffers = existingOffers.filter((o: any) => 
