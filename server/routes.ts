@@ -2130,7 +2130,6 @@ Output only JSON:
 
   // End/withdraw a listing
   app.post("/api/listings/:id/end", async (req, res) => {
-    const { withdrawOffer } = await import("./lib/ebay");
     const { ApiTracer } = await import("./lib/apiTracer");
     
     const tracer = new ApiTracer();
@@ -2151,7 +2150,10 @@ Output only JSON:
       // Withdraw from eBay if published
       if (existingListing.ebayOfferId && existingListing.state === "live") {
         try {
-          await withdrawOffer(existingListing.ebayOfferId, tracer);
+          await ebayClient.withdrawOffer(existingListing.ebayOfferId, {
+            tracer,
+            operationName: "Withdraw listing",
+          });
           console.log(`[End Listing] Successfully withdrew eBay offer ${existingListing.ebayOfferId}`);
         } catch (ebayError: any) {
           console.error("[End Listing] eBay withdraw failed:", ebayError.message);

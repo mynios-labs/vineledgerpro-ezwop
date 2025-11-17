@@ -2,7 +2,7 @@ import { db } from "../db";
 import { orders, orderTimelineEvents, config } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { purchaseLabel } from "../lib/shippo";
-import { createShippingFulfillment } from "../lib/ebay";
+import { ebayClient } from "../lib/EbayClient";
 import { z } from "zod";
 
 // Zod schemas for eBay order validation (shared with routes)
@@ -342,7 +342,7 @@ export class AutomationService {
       const shippedAtTime = new Date();
 
       // Post fulfillment to eBay (OUTSIDE transaction)
-      const fulfillmentResult = await createShippingFulfillment({
+      const fulfillmentResult = await ebayClient.createShippingFulfillment({
         orderId: order.ebayOrderId,
         trackingNumber: order.trackingNumber!,
         shippingCarrierCode: ebayCarrierCode,
