@@ -1,0 +1,106 @@
+function normalizeItemSpecifics(raw: any): Record<string, string[]> {
+  if (!raw) return {};
+
+  let parsed = raw;
+
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.warn("[ItemSpecifics] Failed to parse JSON payload:", err);
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const normalized: Record<string, string[]> = {};
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (value === undefined || value === null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    const cleaned = values
+      .map(v => (v === undefined || v === null ? "" : String(v).trim()))
+      .filter(Boolean);
+
+    if (cleaned.length > 0) {
+      normalized[key] = cleaned;
+    }
+  }
+
+  return normalized;
+}
+
+function extractMissingItemSpecifics(ebayErrorResponse: any): string[] {
+  const missing = new Set<string>();
+
+  if (!ebayErrorResponse?.errors || !Array.isArray(ebayErrorResponse.errors)) {
+    return [];
+  }
+
+  const normalizeSpecificName = (raw: string): string | null => {
+    const cleaned = raw.replace(/\"|'/g, "").trim();
+    if (!cleaned) return null;
+
+    const bracketMatch = /\[([^\]]+)\]/.exec(cleaned);
+    if (bracketMatch?.[1]) return bracketMatch[1].trim();
+
+    const missingMatch = /(item specific|aspect)\s+([^.:]+?)(?:\s+is missing|$)/i.exec(cleaned);
+    if (missingMatch?.[2]) return missingMatch[2].trim();
+
+    if (cleaned.includes(":")) {
+      const afterColon = cleaned.split(":").pop()?.trim();
+      if (afterColon && afterColon.length > 0 && afterColon.length <= 60) {
+        return afterColon;
+      }
+    }
+
+    return cleaned.length <= 80 ? cleaned : null;
+  };
+
+  for (const err of ebayErrorResponse.errors) {
+    const messageText = (err.message || err.longMessage || "").toLowerCase();
+    const isMissingSpecific =
+      err.errorId === 25002 ||
+      messageText.includes("item specific") ||
+      messageText.includes("specifics");
+
+    if (!isMissingSpecific) continue;
+
+    if (Array.isArray(err.parameters)) {
+      for (const param of err.parameters) {
+        const name = (param.name || "").toString().toLowerCase();
+        const value = (param.value || "").toString();
+
+        const normalized = normalizeSpecificName(value);
+        if (normalized && (name === "2" || name === "name" || name.includes("specific") || name.match(/^\d+$/))) {
+          missing.add(normalized);
+        } else if (normalized && err.errorId === 25002) {
+          missing.add(normalized);
+        }
+      }
+    }
+
+    const messageCandidates = [err.message, err.longMessage]
+      .filter(Boolean)
+      .map((m: string) => m.toString());
+
+    for (const text of messageCandidates) {
+      const fromMessage = normalizeSpecificName(text);
+      if (fromMessage) missing.add(fromMessage);
+
+      const bracketMatches = text.match(/\[([^\]]+)\]/g);
+      if (bracketMatches) {
+        bracketMatches.forEach((segment: string) => {
+          const inner = segment.replace(/[\[\]]/g, "").trim();
+          const normalized = normalizeSpecificName(inner);
+          if (normalized) missing.add(normalized);
+        });
+      }
+    }
+  }
+
+  return Array.from(missing);
+}
+server/routes.ts
+Lines 125-228

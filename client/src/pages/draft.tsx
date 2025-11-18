@@ -40,6 +40,73 @@ function isTitleOverLimit(title: string): boolean {
   return title.length > 80;
 }
 
+// Helper: Client-side fallback for extracting missing item specifics from eBay errors
+function deriveMissingItemSpecifics(errors: any[] | undefined): string[] {
+  if (!errors || !Array.isArray(errors)) return [];
+
+  const missing = new Set<string>();
+  const normalize = (raw: string): string | null => {
+    const cleaned = raw.replace(/\"|'/g, "").trim();
+    if (!cleaned) return null;
+
+    const bracketMatch = /\[([^\]]+)\]/.exec(cleaned);
+    if (bracketMatch?.[1]) return bracketMatch[1].trim();
+
+    const missingMatch = /(item specific|aspect)\s+([^.:]+?)(?:\s+is missing|$)/i.exec(cleaned);
+    if (missingMatch?.[2]) return missingMatch[2].trim();
+
+    if (cleaned.includes(":")) {
+      const afterColon = cleaned.split(":").pop()?.trim();
+      if (afterColon && afterColon.length > 0 && afterColon.length <= 60) {
+        return afterColon;
+      }
+    }
+
+    return cleaned.length <= 80 ? cleaned : null;
+  };
+
+  for (const err of errors) {
+    const messageText = (err.message || err.longMessage || "").toLowerCase();
+    const isMissingSpecific =
+      err.errorId === 25002 ||
+      messageText.includes("item specific") ||
+      messageText.includes("specifics");
+
+    if (!isMissingSpecific) continue;
+
+    if (Array.isArray(err.parameters)) {
+      for (const param of err.parameters) {
+        const name = (param.name || "").toString().toLowerCase();
+        const value = (param.value || "").toString();
+        const normalized = normalize(value);
+
+        if (normalized && (name === "2" || name === "name" || name.includes("specific") || name.match(/^\d+$/))) {
+          missing.add(normalized);
+        } else if (normalized && err.errorId === 25002) {
+          missing.add(normalized);
+        }
+      }
+    }
+
+    const messageCandidates = [err.message, err.longMessage].filter(Boolean).map((m: string) => m.toString());
+    for (const text of messageCandidates) {
+      const normalized = normalize(text);
+      if (normalized) missing.add(normalized);
+
+      const brackets = text.match(/\[([^\]]+)\]/g);
+      if (brackets) {
+        brackets.forEach((segment: string) => {
+          const inner = segment.replace(/[\[\]]/g, "").trim();
+          const innerNormalized = normalize(inner);
+          if (innerNormalized) missing.add(innerNormalized);
+        });
+      }
+    }
+  }
+
+  return Array.from(missing);
+}
+
 // Helper: Infer shipping mode from fulfillment policy name
 function inferShippingModeFromPolicy(policyName: string | null): "separate" | "included" {
   if (!policyName) return "separate";
@@ -704,7 +771,12 @@ export default function DraftPage() {
     onError: (error: any) => {
       setPublishState("error");
       if (error instanceof ApiError && error.data) {
-        const missingSpecifics: string[] = error.data.missingItemSpecifics || [];
+        let missingSpecifics: string[] = error.data.missingItemSpecifics || [];
+
+        // Client-side fallback: If server didn't extract specifics, try client-side parsing
+        if (missingSpecifics.length === 0 && error.data.ebayErrors) {
+          missingSpecifics = deriveMissingItemSpecifics(error.data.ebayErrors);
+        }
 
         setPublishResult({
           error: error.data.error || error.message,

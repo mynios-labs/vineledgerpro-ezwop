@@ -165,6 +165,26 @@ function extractMissingItemSpecifics(ebayErrorResponse: any): string[] {
     return [];
   }
 
+  const normalizeSpecificName = (raw: string): string | null => {
+    const cleaned = raw.replace(/\"|'/g, "").trim();
+    if (!cleaned) return null;
+
+    const bracketMatch = /\[([^\]]+)\]/.exec(cleaned);
+    if (bracketMatch?.[1]) return bracketMatch[1].trim();
+
+    const missingMatch = /(item specific|aspect)\s+([^.:]+?)(?:\s+is missing|$)/i.exec(cleaned);
+    if (missingMatch?.[2]) return missingMatch[2].trim();
+
+    if (cleaned.includes(":")) {
+      const afterColon = cleaned.split(":").pop()?.trim();
+      if (afterColon && afterColon.length > 0 && afterColon.length <= 60) {
+        return afterColon;
+      }
+    }
+
+    return cleaned.length <= 80 ? cleaned : null;
+  };
+
   for (const err of ebayErrorResponse.errors) {
     const messageText = (err.message || err.longMessage || "").toLowerCase();
     const isMissingSpecific =
@@ -174,27 +194,36 @@ function extractMissingItemSpecifics(ebayErrorResponse: any): string[] {
 
     if (!isMissingSpecific) continue;
 
-    // Extract from parameters array
     if (Array.isArray(err.parameters)) {
       for (const param of err.parameters) {
-        const value = (param.value || "").toString().replace(/\"|'/g, "").trim();
+        const name = (param.name || "").toString().toLowerCase();
+        const value = (param.value || "").toString();
 
-        if (!value) continue;
-
-        // Field names are single words without spaces
-        if (!value.includes(' ') && !value.includes('.') && value.toLowerCase() !== 'item') {
-          missing.add(value);
+        const normalized = normalizeSpecificName(value);
+        if (normalized && (name === "2" || name === "name" || name.includes("specific") || name.match(/^\d+$/))) {
+          missing.add(normalized);
+        } else if (normalized && err.errorId === 25002) {
+          missing.add(normalized);
         }
       }
     }
 
-    // Also try regex extraction from message
-    const match = /item specific\s+\"?([^\"]+)\"?\s+is missing/.exec(
-      err.message || err.longMessage || ""
-    );
+    const messageCandidates = [err.message, err.longMessage]
+      .filter(Boolean)
+      .map((m: string) => m.toString());
 
-    if (match?.[1]) {
-      missing.add(match[1].trim());
+    for (const text of messageCandidates) {
+      const fromMessage = normalizeSpecificName(text);
+      if (fromMessage) missing.add(fromMessage);
+
+      const bracketMatches = text.match(/\[([^\]]+)\]/g);
+      if (bracketMatches) {
+        bracketMatches.forEach((segment: string) => {
+          const inner = segment.replace(/[\[\]]/g, "").trim();
+          const normalized = normalizeSpecificName(inner);
+          if (normalized) missing.add(normalized);
+        });
+      }
     }
   }
 
