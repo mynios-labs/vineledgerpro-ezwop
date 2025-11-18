@@ -248,8 +248,15 @@ export class EbayClient {
           errorData = { message: responseText };
         }
 
-        throw new Error(
-          `eBay API error ${response.status}: ${JSON.stringify(errorData)}`
+        throw new EbayApiError(
+          `eBay API error ${response.status}: ${JSON.stringify(errorData)}`,
+          {
+            status: response.status,
+            endpoint,
+            method,
+            responseBody: errorData,
+            requestBody: body,
+          }
         );
       }
 

@@ -1783,15 +1783,16 @@ Output only JSON:
       console.error("[Publish] Error:", error.message);
       
       let ebayErrorResponse: any = null;
-      const isEbayApiError = error.name === 'EbayApiError';
+      const isEbayApiError = error instanceof EbayApiError;
       
-      console.log(`[Publish] DEBUG: Error type:`, error.name);
+      console.log(`[Publish] DEBUG: Error type:`, error.constructor.name);
       console.log(`[Publish] DEBUG: Is EbayApiError?`, isEbayApiError);
       
       // Priority 1: Extract from EbayApiError context (most reliable)
       if (isEbayApiError && error.context?.responseBody) {
         ebayErrorResponse = error.context.responseBody;
         console.log(`[Publish] DEBUG: Extracted from error.context.responseBody`);
+        console.log(`[Publish] DEBUG: Full eBay error:`, JSON.stringify(ebayErrorResponse, null, 2));
       }
       
       // Priority 2: Extract from tracer failedStep (fallback)
@@ -1805,9 +1806,6 @@ Output only JSON:
 
       console.log(`[Publish] DEBUG: ebayErrorResponse exists?`, !!ebayErrorResponse);
       console.log(`[Publish] DEBUG: ebayErrorResponse.errors exists?`, !!ebayErrorResponse?.errors);
-      if (ebayErrorResponse) {
-        console.log(`[Publish] DEBUG: Full eBay error:`, JSON.stringify(ebayErrorResponse, null, 2));
-      }
 
       // Build detailed error response with complete eBay error structure
       const errorResponse: any = {
