@@ -1782,18 +1782,31 @@ Output only JSON:
     } catch (error: any) {
       console.error("[Publish] Error:", error.message);
       
-      // Get the failed step from tracer which has the full eBay error response
-      const failedStep = tracer.getFailedStep();
       let ebayErrorResponse: any = null;
+      const isEbayApiError = error.name === 'EbayApiError';
       
-      console.log(`[Publish] DEBUG: failedStep exists?`, !!failedStep);
-      console.log(`[Publish] DEBUG: failedStep.responseBody type:`, typeof failedStep?.responseBody);
+      console.log(`[Publish] DEBUG: Error type:`, error.name);
+      console.log(`[Publish] DEBUG: Is EbayApiError?`, isEbayApiError);
       
-      // Extract full eBay error structure from the failed step's response body
-      if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
-        ebayErrorResponse = failedStep.responseBody;
-        console.log(`[Publish] DEBUG: ebayErrorResponse.errors exists?`, !!ebayErrorResponse?.errors);
-        console.log(`[Publish] DEBUG: ebayErrorResponse:`, JSON.stringify(ebayErrorResponse, null, 2));
+      // Priority 1: Extract from EbayApiError context (most reliable)
+      if (isEbayApiError && error.context?.responseBody) {
+        ebayErrorResponse = error.context.responseBody;
+        console.log(`[Publish] DEBUG: Extracted from error.context.responseBody`);
+      }
+      
+      // Priority 2: Extract from tracer failedStep (fallback)
+      if (!ebayErrorResponse) {
+        const failedStep = tracer.getFailedStep();
+        if (failedStep?.responseBody && typeof failedStep.responseBody === 'object') {
+          ebayErrorResponse = failedStep.responseBody;
+          console.log(`[Publish] DEBUG: Extracted from failedStep.responseBody`);
+        }
+      }
+
+      console.log(`[Publish] DEBUG: ebayErrorResponse exists?`, !!ebayErrorResponse);
+      console.log(`[Publish] DEBUG: ebayErrorResponse.errors exists?`, !!ebayErrorResponse?.errors);
+      if (ebayErrorResponse) {
+        console.log(`[Publish] DEBUG: Full eBay error:`, JSON.stringify(ebayErrorResponse, null, 2));
       }
 
       // Build detailed error response with complete eBay error structure
@@ -1801,11 +1814,14 @@ Output only JSON:
         success: false,
         error: error.message,
         trace: tracer.getTrace(),
-        failedStep,
+        failedStep: tracer.getFailedStep(),
       };
 
+      if (isEbayApiError) {
+        errorResponse.ebayContext = error.context;
+      }
+
       // If we have a full eBay error response, include it verbatim
-      console.log(`[Publish] DEBUG: About to check if ebayErrorResponse?.errors is truthy:`, !!ebayErrorResponse?.errors);
       if (ebayErrorResponse?.errors) {
         errorResponse.ebayErrors = ebayErrorResponse.errors; // Array of full error objects
         errorResponse.ebayErrorDetails = ebayErrorResponse; // Complete eBay response
